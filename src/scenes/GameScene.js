@@ -6,7 +6,7 @@ import { loadRoster, getPlayerById, getGames } from '../data/roster.js';
 import { decideAIMove } from '../ai/AIController.js';
 import { makeSeededKnockout, makeLeague, recordKnockoutResult, recordLeagueResult, leagueStandings, advanceAuto, saveTournament, loadTournament, clearTournament } from '../data/tournament.js';
 import { playKick, playPass, playGoal, playWhistle, playGkSave, isSfxEnabled, setSfxEnabled } from '../audio/sfx.js';
-import { initAuthSession, getUser, onAuthChange, describeUser, signUpWithEmail, signInWithEmail, signInWithGoogle, signOutUser } from '../auth/auth.js';
+import { initAuthSession, getUser, onAuthChange, describeUser, signUpWithEmail, signInWithEmail, signOutUser } from '../auth/auth.js';
 import { saveFormationToProfile, listSavedFormations, deleteSavedFormation } from '../auth/profile.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -932,12 +932,6 @@ export default class GameScene extends Phaser.Scene {
     });
     document.getElementById('profile-signup-btn').addEventListener('click',()=>this._profileAuthAction(signUpWithEmail,'Account created.'));
     document.getElementById('profile-signin-btn').addEventListener('click',()=>this._profileAuthAction(signInWithEmail,'Signed in.'));
-    document.getElementById('profile-google-btn').addEventListener('click',async()=>{
-      try{
-        const {mergedGuestData}=await signInWithGoogle();
-        this._flashProfileStatus(mergedGuestData?'Signed in with Google — your guest formations came with you.':'Signed in with Google.');
-      }catch(err){ this._flashProfileStatus(`Google sign-in failed: ${err.message}`); }
-    });
   }
   async _profileAuthAction(fn,successMsg){
     const email=document.getElementById('profile-email').value.trim();

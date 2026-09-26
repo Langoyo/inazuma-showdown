@@ -5,10 +5,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   linkWithCredential,
-  linkWithPopup,
   EmailAuthProvider,
-  GoogleAuthProvider,
-  signInWithPopup,
   signOut,
 } from 'firebase/auth';
 import { getFirebaseApp } from '../firebase-app.js';
@@ -20,10 +17,10 @@ import { getFirebaseApp } from '../firebase-app.js';
 // an account just to save a formation" wall — "play anonymously" from the
 // feature request is simply never leaving that anonymous session.
 //
-// Upgrading later (email/password sign-up, or Google) *links* the
-// anonymous user's credential onto the same uid instead of creating a
-// separate account, so formations already saved while anonymous carry over
-// rather than becoming orphaned under a uid nobody can reach again.
+// Upgrading later (email/password sign-up) *links* the anonymous
+// user's credential onto the same uid instead of creating a separate
+// account, so formations already saved while anonymous carry over rather
+// than becoming orphaned under a uid nobody can reach again.
 
 let auth = null;
 function getAuthInstance() {
@@ -93,25 +90,6 @@ export async function signInWithEmail(email, password) {
   return result.user;
 }
 
-/** Google sign-in. Tries to link onto the current anonymous session first
- *  (keeps saved formations); if that Google account is already registered
- *  to a different uid (auth/credential-already-in-use), falls back to
- *  plain sign-in to that existing account instead. */
-export async function signInWithGoogle() {
-  const a = getAuthInstance();
-  const provider = new GoogleAuthProvider();
-  if (a.currentUser?.isAnonymous) {
-    try {
-      const result = await linkWithPopup(a.currentUser, provider);
-      return { user: result.user, mergedGuestData: true };
-    } catch (err) {
-      if (err.code !== 'auth/credential-already-in-use') throw err;
-      // Fall through to a plain sign-in to the existing Google account.
-    }
-  }
-  const result = await signInWithPopup(a, provider);
-  return { user: result.user, mergedGuestData: false };
-}
 
 /** Signing out always leaves a fresh anonymous session behind (see the
  *  onAuthStateChanged handler above) — there's no "signed out" state in
