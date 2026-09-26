@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Inazuma Showdown</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400..700&family=Jersey+10&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Pixelify+Sans:wght@400..700&family=Jersey+10&display=swap">
   <style>
 
     *, *::before, *::after { box-sizing: border-box; }
@@ -36,7 +36,9 @@
       margin: 0; padding: 0; background: var(--ink) !important; overflow: hidden;
       touch-action: none; font-size: 17px;
     }
-    h1, h2, h3 { font-family: 'Press Start 2P', 'Courier New', monospace !important; font-weight: normal; }
+    /* Press Start 2P had ambiguous glyphs at small sizes (1/I/l, O/0, S/5);
+       Silkscreen is still a genuine pixel font but keeps those distinct. */
+    h1, h2, h3 { font-family: 'Silkscreen', 'Courier New', monospace !important; font-weight: normal; }
 
     /* ------------------------------------------------------------------ Buttons
        Every button on the page uses nes.css's own real `nes-btn` class (plus
@@ -86,7 +88,7 @@
       position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10;
       background: var(--panel); padding: 6px 18px; border: 3px solid #000; text-align: center;
     }
-    #scoreboard .score { font-family: 'Jersey 10','Press Start 2P',monospace; font-size: 26px; letter-spacing: 2px; }
+    #scoreboard .score { font-family: 'Jersey 10','Silkscreen',monospace; font-size: 26px; letter-spacing: 2px; }
     #scoreboard .clock  { font-size: 13px; opacity: 0.85; margin-top: 3px; }
     #sp-bar-wrap {
       position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
@@ -131,7 +133,7 @@
     }
     .duel-card.loser { opacity: 0.35; filter: grayscale(1); transform: scale(0.92); }
     #duel-vs {
-      font-family: 'Press Start 2P',monospace; font-size: 18px; color: var(--red);
+      font-family: 'Silkscreen',monospace; font-size: 18px; color: var(--red);
       text-shadow: 2px 2px #000; flex: 0 0 auto;
     }
 
@@ -139,7 +141,7 @@
       position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 20;
       display: none; flex-direction: column; align-items: center; gap: 8px; max-width: 96vw;
     }
-    #confrontation-title { font-family: 'Press Start 2P',monospace; background: var(--panel); border: 3px solid #000; padding: 6px 14px; font-size: 13px; }
+    #confrontation-title { font-family: 'Silkscreen',monospace; background: var(--panel); border: 3px solid #000; padding: 6px 14px; font-size: 13px; }
     #confrontation-player-info { background: var(--panel); border: 3px solid #000; padding: 5px 12px; font-size: 14px; }
     #confrontation-timer-wrap { width: 220px; height: 10px; background: var(--panel-2); border: 2px solid #000; overflow: hidden; }
     #confrontation-timer-fill { height: 100%; width: 100%; background: var(--gold); transition: none; }
@@ -395,9 +397,21 @@
     #squad-place-cancel-btn { font-size: 12px; padding: 5px 10px; }
 
     /* ---- search list that feeds the editor */
+    #squad-filters-toggle { width: 100%; max-width: 500px; text-align: left; font-size: 12px; margin-bottom: 8px; }
+    #squad-filters-body.filters-hidden { display: none; }
     #squad-search-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; width: 100%; max-width: 500px; }
     #squad-search-row input, #squad-search-row select { flex: 1; }
     #squad-search-row button { font-size: 13px; }
+    /* Each filter's own reset "x", sat right against its field rather than
+       loose in the row, so it's obviously "clear this one" and not a
+       stray button. */
+    .filter-field { display: flex; flex: 1; min-width: 120px; gap: 4px; align-items: stretch; }
+    .filter-field input, .filter-field select { flex: 1; min-width: 0; }
+    .filter-reset-btn {
+      flex: 0 0 auto; width: 26px; border: 2px solid #000; background: var(--panel-2);
+      color: var(--white); cursor: pointer; font-size: 12px; line-height: 1;
+    }
+    .filter-reset-btn:hover { background: var(--panel); }
     #squad-pick-list {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(126px,1fr));
       gap: 8px; width: 100%; max-width: 500px; padding-bottom: 4px;
@@ -465,7 +479,7 @@
       padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 4px;
     }
     /* ---- full-time screen */
-    #fulltime-score    { font-family: 'Jersey 10','Press Start 2P',monospace; font-size: 52px; margin: 10px 0 12px; }
+    #fulltime-score    { font-family: 'Jersey 10','Silkscreen',monospace; font-size: 52px; margin: 10px 0 12px; }
     #fulltime-verdict  { font-size: 17px; color: var(--gold); margin-bottom: 20px; }
     #fulltime-menu-btn { padding: 12px 26px; font-size: 15px; }
     #fulltime-countdown { font-size: 13px; opacity: 0.8; margin-top: 12px; }
@@ -558,13 +572,35 @@
   <!-- ===================== LANDING ===================== -->
   <div id="landing-panel" class="panel-overlay" style="display:flex;justify-content:center;text-align:center;">
     <button id="sfx-toggle-btn" class="nes-btn is-compact" style="position:absolute;top:10px;right:10px;" title="Toggle sound effects">🔊</button>
+    <button id="profile-open-btn" class="nes-btn is-compact" style="position:absolute;top:10px;left:10px;" title="Account &amp; saved formations">👤</button>
     <!-- Text placeholder for now — swap for an <img> once there's a real logo. -->
     <div id="landing-logo">🏆</div>
-    <h1 id="landing-title" style="font-size:22px;line-height:1.5;margin-bottom:10px;">Inazuma Showdown</h1>
-    <p style="font-size:12px;opacity:0.75;max-width:380px;margin-bottom:26px;">
-      A real-time football game, controlled with the pointer — play solo against the AI, or head-to-head with a friend over the internet.
-    </p>
+    <h1 id="landing-title" style="font-size:22px;line-height:1.5;margin-bottom:26px;">Inazuma Showdown</h1>
     <button id="landing-play-btn" class="nes-btn is-primary" style="font-size:16px;padding:12px 34px;">▶ Play</button>
+  </div>
+
+  <!-- ===================== PROFILE (account + saved formations) ===================== -->
+  <div id="profile-panel" class="panel-overlay" style="justify-content:flex-start;text-align:center;overflow-y:auto;padding-top:20px;">
+    <button id="profile-close-btn" class="nes-btn is-compact" style="position:absolute;top:10px;right:10px;" title="Close">✕</button>
+    <h2 style="font-size:16px;margin:10px 0 6px;">👤 Profile</h2>
+    <div id="profile-status" style="font-size:12px;min-height:16px;margin-bottom:8px;color:var(--gold);"></div>
+
+    <div id="profile-signedin-view" style="display:none;width:100%;max-width:380px;margin-bottom:18px;">
+      <p id="profile-user-label" style="font-size:13px;"></p>
+      <button id="profile-signout-btn" class="nes-btn is-compact">Sign out</button>
+    </div>
+    <div id="profile-guest-view" style="width:100%;max-width:320px;margin-bottom:18px;">
+      <p style="font-size:11px;opacity:.8;">Playing as a guest — sign up to keep your formations if you switch devices.</p>
+      <input id="profile-email" type="email" placeholder="Email" class="nes-input is-compact" style="width:100%;margin-bottom:6px;" />
+      <input id="profile-password" type="password" placeholder="Password" class="nes-input is-compact" style="width:100%;margin-bottom:6px;" />
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+        <button id="profile-signup-btn" class="nes-btn is-primary is-compact">Sign up</button>
+        <button id="profile-signin-btn" class="nes-btn is-compact">Sign in</button>
+      </div>
+    </div>
+
+    <h3 style="font-size:13px;margin-bottom:6px;">Saved formations</h3>
+    <div id="profile-formations-list" style="width:100%;max-width:420px;display:flex;flex-direction:column;gap:6px;"></div>
   </div>
 
   <!-- ===================== MODE SELECT ===================== -->
@@ -582,7 +618,7 @@
       <div style="margin-bottom:16px;">
         <div style="font-size:12px;margin-bottom:4px;">Your code:</div>
         <div style="display:flex;gap:6px;justify-content:center;align-items:center;">
-          <span id="mode-own-code" style="font-family:'Jersey 10','Press Start 2P',monospace;font-size:20px;letter-spacing:3px;background:var(--panel-2);border:3px solid #000;padding:6px 14px;">-</span>
+          <span id="mode-own-code" style="font-family:'Jersey 10','Silkscreen',monospace;font-size:20px;letter-spacing:3px;background:var(--panel-2);border:3px solid #000;padding:6px 14px;">-</span>
           <button id="mode-copy-code-btn" class="nes-btn is-compact" type="button">📋 Copy</button>
         </div>
       </div>
@@ -644,8 +680,11 @@
         <span id="squad-fill-count" style="font-size:11px;opacity:0.75;">0/11 filled</span>
       </div>
 
-      <!-- Keep the squad you built between sessions (this browser only) -->
+      <!-- Save keeps a local (this-browser-only) copy, and — once signed
+           in, even anonymously — a named copy in your profile too (see
+           #profile-panel), which is what the team name below is for. -->
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+        <input id="squad-team-name" type="text" class="nes-input is-compact" placeholder="Team name (optional)" style="flex:1;min-width:140px;" />
         <button id="squad-save-btn" class="nes-btn is-primary is-compact">💾 Save squad</button>
         <button id="squad-load-btn" class="nes-btn is-compact" disabled>📂 Load saved</button>
         <span id="squad-save-status"></span>
@@ -735,10 +774,22 @@
            covered by the drawer once open, same as everything else behind
            it. This is the way to close it again from there instead. -->
       <button id="squad-players-drawer-close" type="button" title="Close">✕</button>
+      <button id="squad-filters-toggle" class="nes-btn is-compact" type="button">▾ Filters</button>
+      <div id="squad-filters-body">
       <div id="squad-search-row">
-        <input id="squad-search" type="text" placeholder="Search player..." />
-        <select id="squad-game-filter"><option value="">All games</option></select>
-        <select id="squad-team-filter"><option value="">All teams</option></select>
+        <span class="filter-field"><input id="squad-search" type="text" placeholder="Search player..." /><button class="filter-reset-btn" data-reset="squad-search" type="button" title="Clear filter">✕</button></span>
+        <span class="filter-field"><select id="squad-game-filter"><option value="">All games</option></select><button class="filter-reset-btn" data-reset="squad-game-filter" type="button" title="Clear filter">✕</button></span>
+        <span class="filter-field"><select id="squad-team-filter"><option value="">All teams</option></select><button class="filter-reset-btn" data-reset="squad-team-filter" type="button" title="Clear filter">✕</button></span>
+        <span class="filter-field">
+          <select id="squad-position-filter">
+            <option value="">All positions</option>
+            <option value="GK">GK</option>
+            <option value="DF">DF</option>
+            <option value="MF">MF</option>
+            <option value="FW">FW</option>
+          </select>
+          <button class="filter-reset-btn" data-reset="squad-position-filter" type="button" title="Clear filter">✕</button>
+        </span>
         <select id="squad-sort-select">
           <option value="rating">Sort: Rating</option>
           <option value="name">Sort: Name</option>
@@ -754,6 +805,7 @@
           <option value="intelligence">Sort: Intelligence</option>
         </select>
         <button id="squad-whole-team-btn" class="nes-btn is-compact" disabled>Select from here</button>
+      </div>
       </div>
       <!-- Shown only while the list is narrowed to the spot you tapped on the
            pitch (see _armEmptySpot / #pick-scope-clear). -->

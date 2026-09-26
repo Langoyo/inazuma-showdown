@@ -5,7 +5,9 @@ import { createPlayerStats, applyRosterPlayerToStats, canActivate, techniquesFor
 import { loadRoster, getPlayerById, getGames } from '../data/roster.js';
 import { decideAIMove } from '../ai/AIController.js';
 import { makeSeededKnockout, makeLeague, recordKnockoutResult, recordLeagueResult, leagueStandings, advanceAuto, saveTournament, loadTournament, clearTournament } from '../data/tournament.js';
-import { playKick, playPass, playGoal, playWhistle, isSfxEnabled, setSfxEnabled } from '../audio/sfx.js';
+import { playKick, playPass, playGoal, playWhistle, playGkSave, isSfxEnabled, setSfxEnabled } from '../audio/sfx.js';
+import { initAuthSession, getUser, onAuthChange, describeUser, signUpWithEmail, signInWithEmail, signOutUser } from '../auth/auth.js';
+import { saveFormationToProfile, listSavedFormations, deleteSavedFormation } from '../auth/profile.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────
 // The logical field is big — the VIEWPORT (what the canvas shows) is smaller.
@@ -539,6 +541,7 @@ export default class GameScene extends Phaser.Scene {
     this.matter.world.on('collisionstart',ev=>this._collisions(ev));
     this._initLandingAndModeFlow();
     this._initInfoIcons();
+    this._initProfilePanel();
   }
 
   /** Every "ⓘ" icon in the app (static HTML, or injected later like the
@@ -906,6 +909,102 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // ════════════════════════════════════════════════════════════════════
+  // Account & profile (Firebase Auth + Firestore-backed saved formations)
+  // ════════════════════════════════════════════════════════════════════
+  /** Every player has *some* signed-in Firebase user from the moment the
+   *  app loads — anonymous until they choose to sign up (see auth.js).
+   *  This doesn't block anything else in the scene; the profile panel
+   *  just reflects whatever auth state settles into, whenever that is. */
+  _initProfilePanel(){
+    initAuthSession().catch(err=>console.warn('[auth] init failed:',err));
+    onAuthChange(()=>this._refreshProfilePanel());
+
+    document.getElementById('profile-open-btn').addEventListener('click',()=>{
+      document.getElementById('profile-panel').style.display='flex';
+      this._refreshProfilePanel();
+    });
+    document.getElementById('profile-close-btn').addEventListener('click',()=>{
+      document.getElementById('profile-panel').style.display='none';
+    });
+    document.getElementById('profile-signout-btn').addEventListener('click',async()=>{
+      try{ await signOutUser(); this._flashProfileStatus('Signed out.'); }
+      catch(err){ this._flashProfileStatus(`Couldn't sign out: ${err.message}`); }
+    });
+    document.getElementById('profile-signup-btn').addEventListener('click',()=>this._profileAuthAction(signUpWithEmail,'Account created.'));
+    document.getElementById('profile-signin-btn').addEventListener('click',()=>this._profileAuthAction(signInWithEmail,'Signed in.'));
+  }
+  async _profileAuthAction(fn,successMsg){
+    const email=document.getElementById('profile-email').value.trim();
+    const password=document.getElementById('profile-password').value;
+    if(!email||!password){ this._flashProfileStatus('Enter an email and password first.'); return; }
+    try{ await fn(email,password); this._flashProfileStatus(successMsg); }
+    catch(err){ this._flashProfileStatus(err.message); }
+  }
+  _flashProfileStatus(msg){
+    const el=document.getElementById('profile-status');
+    el.textContent=msg;
+    clearTimeout(this._profileStatusTimer);
+    this._profileStatusTimer=setTimeout(()=>{ el.textContent=''; },5000);
+  }
+  async _refreshProfilePanel(){
+    const user=getUser();
+    const signedIn=!!user&&!user.isAnonymous;
+    document.getElementById('profile-signedin-view').style.display=signedIn?'block':'none';
+    document.getElementById('profile-guest-view').style.display=signedIn?'none':'block';
+    if(signedIn) document.getElementById('profile-user-label').textContent=describeUser(user);
+    const list=document.getElementById('profile-formations-list');
+    if(!user){ list.innerHTML='<p style="opacity:.7;font-size:11px;">Sign in to see your saved formations.</p>'; return; }
+    list.innerHTML='<p style="opacity:.7;font-size:11px;">Loading…</p>';
+    try{
+      const formations=await listSavedFormations(user.uid);
+      this._renderSavedFormationsList(formations);
+    }catch(err){
+      list.innerHTML=`<p style="opacity:.7;font-size:11px;color:#f88">Couldn't load saved formations: ${err.message}</p>`;
+    }
+  }
+  _renderSavedFormationsList(formations){
+    const list=document.getElementById('profile-formations-list');
+    if(!formations.length){ list.innerHTML='<p style="opacity:.7;font-size:11px;">No saved formations yet — build a squad and hit Save.</p>'; return; }
+    list.innerHTML='';
+    formations.forEach(f=>{
+      const row=document.createElement('div');
+      row.style.cssText='display:flex;align-items:center;gap:8px;background:var(--panel);border:2px solid #000;padding:8px;';
+      const filled=(f.slots||[]).filter(Boolean).length;
+      row.innerHTML=`<div style="flex:1;text-align:left;font-size:12px;"><b>${f.name||'Untitled squad'}</b><br><span style="opacity:.7;font-size:10px;">${f.formation||''} · ${filled}/11</span></div>`;
+      const loadBtn=document.createElement('button');
+      loadBtn.className='nes-btn is-compact'; loadBtn.style.fontSize='11px'; loadBtn.textContent='📂 Load';
+      loadBtn.addEventListener('click',()=>this._applySavedFormation(f));
+      const delBtn=document.createElement('button');
+      delBtn.className='nes-btn is-compact'; delBtn.style.fontSize='11px'; delBtn.textContent='🗑';
+      delBtn.addEventListener('click',async()=>{
+        const user=getUser();
+        try{ await deleteSavedFormation(user.uid,f.id); this._refreshProfilePanel(); }
+        catch(err){ this._flashProfileStatus(`Couldn't delete: ${err.message}`); }
+      });
+      row.appendChild(loadBtn); row.appendChild(delBtn);
+      list.appendChild(row);
+    });
+  }
+  /** Loads a profile-saved formation onto your own side of the pitch —
+   *  same shape _loadSquad reads from localStorage, ids re-resolved
+   *  against the current roster so a player no longer in the data is
+   *  simply skipped instead of breaking the load. */
+  _applySavedFormation(f){
+    const known=id=>id&&getPlayerById(id)?id:null;
+    const slots=(f.slots||[]).slice(0,TEAM_SIZE).map(known);
+    while(slots.length<TEAM_SIZE) slots.push(null);
+    const bench=new Set((f.bench||[]).map(known).filter(Boolean));
+    if(f.formation&&FORMATIONS[f.formation]){
+      this.chosenFormation=f.formation;
+      document.getElementById('formation-select').value=f.formation;
+    }
+    this.squadSlots=slots; this.benchIds=bench;
+    this._setEditSide('me');
+    document.getElementById('profile-panel').style.display='none';
+    this._flashSquadStatus(`Loaded "${f.name||'Untitled squad'}" (${slots.filter(Boolean).length}/11)`);
+  }
+
+  // ════════════════════════════════════════════════════════════════════
   // Squad editor (topological pitch)
   // ════════════════════════════════════════════════════════════════════
   _initSquadEditor(){
@@ -917,7 +1016,19 @@ export default class GameScene extends Phaser.Scene {
     document.getElementById('squad-search').addEventListener('input',()=>this._renderPickListReset());
     document.getElementById('squad-game-filter').addEventListener('change',()=>this._renderPickListReset());
     document.getElementById('squad-team-filter').addEventListener('change',()=>this._renderPickListReset());
+    document.getElementById('squad-position-filter').addEventListener('change',()=>this._renderPickListReset());
     document.getElementById('squad-sort-select').addEventListener('change',()=>this._renderPickListReset());
+    // Each filter's own "x" clears just that field (back to its default
+    // value) and re-renders — data-reset names the element it resets, so
+    // one listener covers all of them instead of one per button.
+    document.querySelectorAll('.filter-reset-btn').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const el=document.getElementById(btn.dataset.reset);
+        el.value='';
+        this._renderPickListReset();
+      });
+    });
+    document.getElementById('squad-filters-toggle').addEventListener('click',()=>this._toggleSquadFilters());
     document.getElementById('pick-prev-btn').addEventListener('click',()=>{ this._pickPage=Math.max(0,this._pickPage-1); this._renderPickList(); });
     document.getElementById('pick-next-btn').addEventListener('click',()=>{ this._pickPage++; this._renderPickList(); });
     document.getElementById('squad-remove-btn').addEventListener('click',()=>this._removeSelectedFromSquad());
@@ -1033,9 +1144,26 @@ export default class GameScene extends Phaser.Scene {
     };
     try{
       localStorage.setItem(this._savedSquadKey(),JSON.stringify(payload));
-      this._flashSquadStatus(`Saved — ${payload.slots.filter(Boolean).length}/11 and ${payload.bench.length} on the bench`);
     }catch(err){
       this._flashSquadStatus(`Couldn't save: ${err.message}`);
+      this._refreshSavedSquadUI();
+      return;
+    }
+    const filled=`${payload.slots.filter(Boolean).length}/11 and ${payload.bench.length} on the bench`;
+    const user=getUser();
+    if(user){
+      const teamName=document.getElementById('squad-team-name').value.trim();
+      saveFormationToProfile(user.uid,{name:teamName,formation:payload.formation,slots:payload.slots,bench:payload.bench})
+        .then(()=>{
+          this._flashSquadStatus(`Saved "${teamName||'Untitled squad'}" to your profile — ${filled}`);
+          this._refreshProfilePanel();
+        })
+        .catch(err=>{
+          console.warn('[profile] save failed:',err);
+          this._flashSquadStatus(`Saved locally, but profile save failed: ${err.message}`);
+        });
+    }else{
+      this._flashSquadStatus(`Saved — ${filled}`);
     }
     this._refreshSavedSquadUI();
   }
@@ -1075,6 +1203,14 @@ export default class GameScene extends Phaser.Scene {
    *  space; it doesn't affect which side (me/rival) is being edited. */
   _toggleSquadSection(view){
     this._setSquadSection(view,!this.squadSectionOpen[view]);
+  }
+  /** Filters within the "Browse Players" list are their own, independent
+   *  collapsible — defaults open (see _initSquadEditor), separate from
+   *  whether the whole "players" section itself is open. */
+  _toggleSquadFilters(){
+    const body=document.getElementById('squad-filters-body');
+    const hidden=body.classList.toggle('filters-hidden');
+    document.getElementById('squad-filters-toggle').textContent=hidden?'▸ Filters':'▾ Filters';
   }
   _setSquadSection(view,open){
     if(this.squadSectionOpen[view]===open) return;
@@ -1622,14 +1758,22 @@ export default class GameScene extends Phaser.Scene {
     const sortKey=document.getElementById('squad-sort-select').value;
     const inSquad=this._allInSquad(); const PAGE_SIZE=30;
     const sel=this._squadSel;
-    const pos=this._pickPosFilter;
+    // _pickPosFilter is the "scope" lock set when tapping an empty pitch
+    // spot (narrows to that slot's role, with its own banner/clear button
+    // below); squad-position-filter is the independent, user-toggleable
+    // filter in the search row. A scope lock wins if both are somehow set,
+    // since it reflects an actual spot you're about to fill.
+    const scopePos=this._pickPosFilter;
+    const userPos=document.getElementById('squad-position-filter').value;
+    const pos=scopePos||userPos;
     const matches=this.rosterAll.filter(p=>(!pos||p.position===pos)&&(!gf||p.game===gf)&&(!tfTeam||p.team===tfTeam)&&(!tfGame||p.game===tfGame)&&(!q||p.name.toLowerCase().includes(q)||(p.nickname||'').toLowerCase().includes(q)));
     // Say which spot the list is narrowed for, with the way out of it — the
     // narrowing is invisible otherwise, and a roster of ~5000 suddenly
     // showing a few hundred reads as a bug rather than as help.
     const scope=document.getElementById('pick-scope');
-    scope.style.display=pos?'flex':'none';
-    if(pos) document.getElementById('pick-scope-role').textContent=pos;
+    scope.style.display=scopePos?'flex':'none';
+    if(scopePos) document.getElementById('pick-scope-role').textContent=scopePos;
+    document.getElementById('squad-position-filter').disabled=!!scopePos;
     const sorters=this._pickListSorters();
     matches.sort(sorters[sortKey]||sorters.rating);
     const pageCount=Math.max(1,Math.ceil(matches.length/PAGE_SIZE));
@@ -3099,6 +3243,7 @@ export default class GameScene extends Phaser.Scene {
       this.possRole=c.defenderRole;
       this._setActive(c.defenderRole,c.defenderId);
       title=`${dName} saves it!`;
+      playGkSave();
     }
     this.confrontation=null;
     this.confrontResult={title,outcome,until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS,fx};
