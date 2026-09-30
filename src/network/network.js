@@ -1,30 +1,19 @@
-import { joinRoom } from 'trystero/firebase';
+import { joinRoom } from 'trystero/torrent';
 
-// Trystero supports several public signaling backends for the initial
-// "how do two anonymous browsers find each other" handshake, before a
-// direct WebRTC connection takes over — the actual match (positions,
-// input, 20 times a second) stays direct peer-to-peer either way, this
-// only affects that brief up-front handshake. Two public options were
-// tried and both failed for real players:
-//  - Nostr relays (social-network protocol repurposed as a message bus):
-//    pinning our own relay list fixed one real outage, but a second real
-//    two-player test hit a wall of *different* relay failures (502s,
-//    timeouts, and a relay explicitly rejecting the connection as "not in
-//    our web of trust" — a policy block, not downtime).
-//  - BitTorrent trackers (purpose-built for anonymous WebRTC peers, no
-//    identity layer): still failed to connect for a real player.
-// Both are infrastructure we don't control, at the mercy of operators
-// increasingly locking down against exactly this traffic pattern
-// (anonymous, ephemeral, automated). This uses a Firebase Realtime
-// Database project we actually own instead — signaling is just a handful
-// of tiny writes per connection (not per frame), well within its free
-// tier, and its own console/Data tab is somewhere we can actually see
-// what's happening if this ever needs debugging again.
-const FIREBASE_DB_URL = 'https://inazuma-showdown-default-rtdb.europe-west1.firebasedatabase.app/';
+// APP_ID identifies this app inside Trystero's public signaling network.
+const APP_ID = 'inazuma-clone-proto-v1';
 
-// Fixing signaling (above) got the two browsers finding each other, but
-// the actual WebRTC connection still failed for a real two-player test —
-// a different problem. Trystero's own default ICE servers are STUN-only
+// Signaling (how two browsers find each other before the direct WebRTC
+// connection takes over) goes through public BitTorrent trackers, with no
+// backend of our own. Nostr relays failed outright (dead DNS, expired
+// certs, "not in our web of trust" rejections). BitTorrent trackers were
+// judged failing too, but that test predates finding the ICE-servers bug
+// patched in index.html, which made every connection fail after
+// signaling no matter which strategy was used. So trackers plus TURN plus
+// that fix hasn't actually been tried yet.
+
+// Signaling alone isn't enough: the WebRTC connection itself also has to
+// get through real home/mobile NATs. Trystero's own default ICE servers are STUN-only
 // (a handful of Google/Twilio addresses, see node_modules/trystero/src/
 // peer.js), and STUN alone only helps two peers discover their public
 // address; it can't get through every NAT type real home/mobile networks
@@ -86,7 +75,7 @@ if (typeof window !== 'undefined') window.__iceServers = ICE_SERVERS;
  *  - sendSquad / onSquad: each player sends their chosen starter + bench
  */
 export function connectToRoom(roomCode) {
-  const room = joinRoom({ appId: FIREBASE_DB_URL, rtcConfig: { iceServers: ICE_SERVERS } }, roomCode);
+  const room = joinRoom({ appId: APP_ID, rtcConfig: { iceServers: ICE_SERVERS } }, roomCode);
 
   const [sendInput, onInput] = room.makeAction('input');
   const [sendState, onState] = room.makeAction('state');

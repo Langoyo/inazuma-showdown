@@ -4,6 +4,16 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Multiplayer signaling: back to public BitTorrent trackers, no backend
+Dropped the Firebase Realtime Database signaling (and the `firebase`
+dependency) to keep the game fully peer-to-peer with no backend of our own.
+`src/network/network.js` uses `trystero/torrent` again. The two connection
+fixes below stay: the TURN relay and the ICE-servers patch in `index.html`.
+The earlier "BitTorrent trackers don't work" verdict came before the ICE
+bug was found, and that bug made every connection fail after signaling
+whatever strategy was used. So this combination still needs a real
+two-device test.
+
 ## Fix: TURN servers were fetched correctly but never actually reached the connection
 Adding a TURN server (previous entry) didn't fix real two-player testing —
 still `Uncaught Error: Connection failed`, even with valid TURN credentials
