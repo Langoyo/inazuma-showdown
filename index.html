@@ -366,8 +366,11 @@
     #squad-save-status { flex-basis: 100%; font-size: 11px; opacity: 0.9; color: var(--green); }
     #squad-save-status:empty { display: none; }
 
-    /* ---- profile panel */
-    .profile-body { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 10px; }
+    /* ---- profile section (under the save row in the squad editor) */
+    #profile-section { margin-top: 10px; padding-top: 10px; border-top: 2px dashed rgba(255,255,255,0.12); }
+    #profile-section summary { cursor: pointer; font-size: 12px; user-select: none; }
+    .profile-body { width: 100%; display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+    .profile-hint { font-size: 11px; opacity: 0.7; }
     .profile-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
     .profile-field input { font-size: 13px; padding: 6px 8px; }
     .profile-section-title { font-size: 12px; opacity: 0.8; margin-top: 4px; }
@@ -774,9 +777,31 @@
         <input id="squad-team-name" type="text" class="pixel-select" placeholder="Team name (optional)" />
         <button id="squad-save-btn" class="nes-btn">💾 Save</button>
         <button id="squad-load-btn" class="nes-btn" disabled>📂 Load</button>
-        <button id="profile-open-btn" class="nes-btn" type="button">👤 Profile</button>
         <span id="squad-save-status"></span>
       </div>
+
+      <!-- Profile: your name plus every squad you've saved, kept in this
+           browser and exportable as a .json file you can back up, move to
+           another device, or edit by hand and import again. Lives inside
+           #squad-editor so it folds away with the Formation section. -->
+      <details id="profile-section">
+        <summary>👤 Profile</summary>
+        <div class="profile-body">
+          <div class="profile-hint">Saved in this browser. Download it to back it up or move it to another device; you can edit the file by hand and import it back.</div>
+          <label class="profile-field">Your name
+            <input id="profile-name" type="text" class="pixel-select" maxlength="24" placeholder="Player name" />
+          </label>
+          <div class="profile-section-title">Saved squads</div>
+          <div id="profile-squads"></div>
+          <button id="profile-save-current-btn" class="nes-btn is-primary" type="button">＋ Save current squad</button>
+          <div class="profile-file-row">
+            <button id="profile-download-btn" class="nes-btn" type="button">⬇ Download profile</button>
+            <button id="profile-import-btn" class="nes-btn" type="button">⬆ Import profile</button>
+            <input id="profile-import-file" type="file" accept="application/json,.json" hidden />
+          </div>
+          <div id="profile-status"></div>
+        </div>
+      </details>
     </div>
     </div>
 
@@ -844,28 +869,6 @@
     <div id="confirm-bar">
       <button id="confirm-squad-btn" class="nes-btn is-primary" disabled>Confirm squad (0/11)</button>
       <div id="squad-status"></div>
-    </div>
-  </div>
-
-  <!-- Profile: your name plus every squad you've saved, kept in this browser
-       and exportable as a .json file you can back up, move to another
-       device, or even edit by hand and import again. -->
-  <div id="profile-panel" class="panel-overlay">
-    <h2>Profile <span class="info-icon" data-info-title="Your profile" data-info-body="Your name and the squads you've saved live in this browser. Download them as a file to keep a backup or move to another device, then import that file there. You can rename, update or delete squads here, or edit the downloaded file in any text editor and import it back.">ⓘ</span></h2>
-    <div class="profile-body">
-      <label class="profile-field">Your name
-        <input id="profile-name" type="text" class="pixel-select" maxlength="24" placeholder="Player name" />
-      </label>
-      <div class="profile-section-title">Saved squads</div>
-      <div id="profile-squads"></div>
-      <button id="profile-save-current-btn" class="nes-btn is-primary" type="button">＋ Save current squad</button>
-      <div class="profile-file-row">
-        <button id="profile-download-btn" class="nes-btn" type="button">⬇ Download profile</button>
-        <button id="profile-import-btn" class="nes-btn" type="button">⬆ Import profile</button>
-        <input id="profile-import-file" type="file" accept="application/json,.json" hidden />
-      </div>
-      <div id="profile-status"></div>
-      <button id="profile-close-btn" class="nes-btn is-compact" type="button">← Back</button>
     </div>
   </div>
 

@@ -16,8 +16,10 @@ and how to run it, see [`README.md`](./README.md).
   real team (and era) in a tournament, and the opponent's own team name in
   multiplayer (squad payloads now carry a `name`). The `.score` text itself
   is unchanged, so full-time scoring still reads it the same way.
-- **Profile file.** A new 👤 Profile button in the squad editor opens a
-  panel with your player name and a list of saved squads. Save the current
+- **Profile file.** A collapsible 👤 Profile section sits below the
+  formation (pitch, bench and save row) in the squad editor, and folds away
+  with the Formation toggle. It holds your player name and a list of saved
+  squads. Save the current
   squad (saving under an existing name updates it), rename, update from the
   editor, load or delete. The whole profile can be downloaded as
   `inazuma-profile.json`, edited by hand if you like, and imported back —

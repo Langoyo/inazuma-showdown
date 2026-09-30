@@ -990,8 +990,6 @@ export default class GameScene extends Phaser.Scene {
     });
     document.getElementById('squad-save-btn').addEventListener('click',()=>this._saveSquad());
     document.getElementById('squad-load-btn').addEventListener('click',()=>this._loadSquad());
-    document.getElementById('profile-open-btn').addEventListener('click',()=>this._openProfile());
-    document.getElementById('profile-close-btn').addEventListener('click',()=>this._closeProfile());
     document.getElementById('profile-name').addEventListener('change',e=>this._profileSetPlayerName(e.target.value));
     document.getElementById('profile-save-current-btn').addEventListener('click',()=>this._profileSaveCurrent());
     document.getElementById('profile-download-btn').addEventListener('click',()=>this._profileDownload());
@@ -1028,6 +1026,7 @@ export default class GameScene extends Phaser.Scene {
     this._applySquadSectionVisibility();
     this._renderPitch(); this._renderPickList();
     this._refreshSavedSquadUI();
+    this._refreshProfile();
     // Tournament state lives entirely in localStorage (see tournament.js) —
     // _returnToMenu does a full page reload after every match, which wipes
     // any in-memory state a match's result would otherwise need to survive.
@@ -1127,13 +1126,11 @@ export default class GameScene extends Phaser.Scene {
     const el=document.getElementById('profile-status');
     el.textContent=msg; el.classList.toggle('is-error',isError);
   }
-  _openProfile(){
+  _refreshProfile(){
     document.getElementById('profile-name').value=this._readProfile().playerName;
     this._profileStatus('');
     this._renderProfile();
-    document.getElementById('profile-panel').style.display='flex';
   }
-  _closeProfile(){ document.getElementById('profile-panel').style.display='none'; }
   /** Built with DOM calls and textContent, never innerHTML — squad names come
    *  from a file that may have been edited by anyone. */
   _renderProfile(){
@@ -1196,7 +1193,7 @@ export default class GameScene extends Phaser.Scene {
   _profileLoad(id){
     const s=this._readProfile().squads.find(x=>x.id===id); if(!s) return;
     this._applySavedSquad(s);
-    this._closeProfile();
+    this._profileStatus(`Loaded "${s.name}" into the editor`);
   }
   _profileUpdate(id){
     const profile=this._readProfile();
