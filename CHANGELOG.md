@@ -4,6 +4,28 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Tournament match length, team names on the scoreboard, downloadable profile
+- **Match length is picked once per tournament.** Every fixture ends in a
+  page reload, which reset the half length to the default, so it had to be
+  reselected before each match. The half length chosen in the squad editor
+  is now stored with the tournament (`halfLengthS`), reapplied before every
+  fixture, and shown in the bracket header.
+- **Team names on the scoreboard.** The goal counter now reads
+  `Raimon  2 - 1  Rival`. Your side uses the squad editor's team name, then
+  the profile's player name, then "You". The rival is "Rival" in solo, the
+  real team (and era) in a tournament, and the opponent's own team name in
+  multiplayer (squad payloads now carry a `name`). The `.score` text itself
+  is unchanged, so full-time scoring still reads it the same way.
+- **Profile file.** A new 👤 Profile button in the squad editor opens a
+  panel with your player name and a list of saved squads. Save the current
+  squad (saving under an existing name updates it), rename, update from the
+  editor, load or delete. The whole profile can be downloaded as
+  `inazuma-profile.json`, edited by hand if you like, and imported back —
+  import merges by squad name and is validated (unknown formations fall back
+  to 4-4-2, sizes are capped, names are rendered as text, never HTML). Still
+  no backend: the working copy lives in `localStorage`, the file is the
+  backup/transfer format. The older one-slot Save/Load is unchanged.
+
 ## Browse-players filters, team names, a clearer font, and a few smaller fixes
 A batch of independent gameplay/UX requests, landed together:
 

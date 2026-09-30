@@ -88,7 +88,16 @@
       position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10;
       background: var(--panel); padding: 6px 18px; border: 3px solid #000; text-align: center;
     }
+    #scoreboard .score-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
+    #scoreboard .team-name {
+      font-size: 11px; max-width: 90px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; opacity: 0.9;
+    }
+    #scoreboard .team-name:empty { display: none; }
+    #scoreboard .team-name#score-name-a { text-align: right; }
+    #scoreboard .team-name#score-name-b { text-align: left; }
     #scoreboard .score { font-family: 'Jersey 10','Silkscreen',monospace; font-size: 26px; letter-spacing: 2px; }
+    @media (max-width: 480px) { #scoreboard .team-name { max-width: 56px; font-size: 10px; } }
     #scoreboard .clock  { font-size: 13px; opacity: 0.85; margin-top: 3px; }
     #sp-bar-wrap {
       position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
@@ -357,6 +366,24 @@
     #squad-save-status { flex-basis: 100%; font-size: 11px; opacity: 0.9; color: var(--green); }
     #squad-save-status:empty { display: none; }
 
+    /* ---- profile panel */
+    .profile-body { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 10px; }
+    .profile-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+    .profile-field input { font-size: 13px; padding: 6px 8px; }
+    .profile-section-title { font-size: 12px; opacity: 0.8; margin-top: 4px; }
+    #profile-squads { display: flex; flex-direction: column; gap: 6px; }
+    .profile-squad {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+      padding: 6px; background: var(--panel-2); border: 1px solid rgba(255,255,255,0.15);
+    }
+    .profile-squad input { flex: 1; min-width: 120px; font-size: 12px; padding: 4px 6px; }
+    .profile-squad .meta { flex-basis: 100%; font-size: 10px; opacity: 0.7; }
+    .profile-squad .nes-btn, .profile-file-row .nes-btn { font-size: 11px; padding: 2px 8px; margin: 0; }
+    .profile-file-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .profile-empty { font-size: 11px; opacity: 0.6; }
+    #profile-status { font-size: 11px; color: var(--green); min-height: 14px; }
+    #profile-status.is-error { color: var(--red); }
+
     /* ---- topological squad editor */
     #squad-editor { width: 100%; max-width: 500px; }
     #formation-pitch {
@@ -508,7 +535,14 @@
 </head>
 <body>
   <div id="room-ui">Room: <span id="room-code">-</span></div>
-  <div id="scoreboard"><div class="score">0 - 0</div><div class="clock" id="match-clock">1st half — 3:00</div></div>
+  <div id="scoreboard">
+    <div class="score-row">
+      <span class="team-name" id="score-name-a"></span>
+      <div class="score">0 - 0</div>
+      <span class="team-name" id="score-name-b"></span>
+    </div>
+    <div class="clock" id="match-clock">1st half — 3:00</div>
+  </div>
   <div id="mode-badge">🤖 Solo (vs AI)</div>
 
   <!-- Explanation popup for every "ⓘ" icon in the app — see GameScene._initInfoIcons -->
@@ -740,6 +774,7 @@
         <input id="squad-team-name" type="text" class="pixel-select" placeholder="Team name (optional)" />
         <button id="squad-save-btn" class="nes-btn">💾 Save</button>
         <button id="squad-load-btn" class="nes-btn" disabled>📂 Load</button>
+        <button id="profile-open-btn" class="nes-btn" type="button">👤 Profile</button>
         <span id="squad-save-status"></span>
       </div>
     </div>
@@ -809,6 +844,28 @@
     <div id="confirm-bar">
       <button id="confirm-squad-btn" class="nes-btn is-primary" disabled>Confirm squad (0/11)</button>
       <div id="squad-status"></div>
+    </div>
+  </div>
+
+  <!-- Profile: your name plus every squad you've saved, kept in this browser
+       and exportable as a .json file you can back up, move to another
+       device, or even edit by hand and import again. -->
+  <div id="profile-panel" class="panel-overlay">
+    <h2>Profile <span class="info-icon" data-info-title="Your profile" data-info-body="Your name and the squads you've saved live in this browser. Download them as a file to keep a backup or move to another device, then import that file there. You can rename, update or delete squads here, or edit the downloaded file in any text editor and import it back.">ⓘ</span></h2>
+    <div class="profile-body">
+      <label class="profile-field">Your name
+        <input id="profile-name" type="text" class="pixel-select" maxlength="24" placeholder="Player name" />
+      </label>
+      <div class="profile-section-title">Saved squads</div>
+      <div id="profile-squads"></div>
+      <button id="profile-save-current-btn" class="nes-btn is-primary" type="button">＋ Save current squad</button>
+      <div class="profile-file-row">
+        <button id="profile-download-btn" class="nes-btn" type="button">⬇ Download profile</button>
+        <button id="profile-import-btn" class="nes-btn" type="button">⬆ Import profile</button>
+        <input id="profile-import-file" type="file" accept="application/json,.json" hidden />
+      </div>
+      <div id="profile-status"></div>
+      <button id="profile-close-btn" class="nes-btn is-compact" type="button">← Back</button>
     </div>
   </div>
 

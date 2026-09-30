@@ -990,6 +990,16 @@ export default class GameScene extends Phaser.Scene {
     });
     document.getElementById('squad-save-btn').addEventListener('click',()=>this._saveSquad());
     document.getElementById('squad-load-btn').addEventListener('click',()=>this._loadSquad());
+    document.getElementById('profile-open-btn').addEventListener('click',()=>this._openProfile());
+    document.getElementById('profile-close-btn').addEventListener('click',()=>this._closeProfile());
+    document.getElementById('profile-name').addEventListener('change',e=>this._profileSetPlayerName(e.target.value));
+    document.getElementById('profile-save-current-btn').addEventListener('click',()=>this._profileSaveCurrent());
+    document.getElementById('profile-download-btn').addEventListener('click',()=>this._profileDownload());
+    document.getElementById('profile-import-btn').addEventListener('click',()=>document.getElementById('profile-import-file').click());
+    document.getElementById('profile-import-file').addEventListener('change',async e=>{
+      await this._profileImport(e.target.files[0]);
+      e.target.value=''; // so re-importing the same file fires change again
+    });
     document.getElementById('tournament-back-btn').addEventListener('click',()=>this._closeTournamentPanel());
     // The setup form and the running bracket/table are both re-rendered
     // wholesale on every change (see _renderTournamentPanel), so their
@@ -1054,7 +1064,11 @@ export default class GameScene extends Phaser.Scene {
   }
   _loadSquad(){
     const saved=this._readSavedSquad();
-    if(!saved) return;
+    if(saved) this._applySavedSquad(saved);
+  }
+  /** Puts a `{name,slots,bench,formation}` record into the editor — shared by
+   *  the one-slot browser save and the profile's squad list. */
+  _applySavedSquad(saved){
     const known=id=>id&&getPlayerById(id)?id:null;
     const slots=(saved.slots||[]).slice(0,TEAM_SIZE).map(known);
     while(slots.length<TEAM_SIZE) slots.push(null);
@@ -1080,6 +1094,168 @@ export default class GameScene extends Phaser.Scene {
     el.textContent=msg;
     clearTimeout(this._squadStatusTimer);
     this._squadStatusTimer=setTimeout(()=>{ el.textContent=''; },4000);
+  }
+
+  // ---- profile (kept in this browser, exportable as a file) ---------------
+  _profileKey(){ return 'inazuma-clone:profile:v1'; }
+  /** Always returns a well-formed profile. The input may be a hand-edited or
+   *  foreign file the user imported, so every field is type-checked and
+   *  clamped rather than trusted. */
+  _cleanProfile(raw){
+    const str=(v,n)=>typeof v==='string'?v.trim().slice(0,n):'';
+    const ids=(v,n)=>Array.isArray(v)?v.slice(0,n).map(x=>(typeof x==='string'||typeof x==='number')?x:null):[];
+    const newId=()=>`sq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+    const squads=(Array.isArray(raw?.squads)?raw.squads:[]).slice(0,50).map(s=>({
+      id:str(s?.id,40)||newId(),
+      name:str(s?.name,24)||'Untitled squad',
+      formation:(typeof s?.formation==='string'&&Object.hasOwn(FORMATIONS,s.formation))?s.formation:DEFAULT_FORMATION,
+      slots:ids(s?.slots,TEAM_SIZE),
+      bench:ids(s?.bench,20).filter(x=>x!=null),
+      savedAt:Number.isFinite(s?.savedAt)?s.savedAt:Date.now()
+    }));
+    return {format:'inazuma-profile',version:1,playerName:str(raw?.playerName,24),squads};
+  }
+  _readProfile(){
+    try{ return this._cleanProfile(JSON.parse(localStorage.getItem(this._profileKey())||'null')); }
+    catch{ return this._cleanProfile(null); }
+  }
+  _writeProfile(profile){
+    try{ localStorage.setItem(this._profileKey(),JSON.stringify(profile)); return true; }
+    catch(err){ this._profileStatus(`Couldn't save: ${err.message}`,true); return false; }
+  }
+  _profileStatus(msg,isError=false){
+    const el=document.getElementById('profile-status');
+    el.textContent=msg; el.classList.toggle('is-error',isError);
+  }
+  _openProfile(){
+    document.getElementById('profile-name').value=this._readProfile().playerName;
+    this._profileStatus('');
+    this._renderProfile();
+    document.getElementById('profile-panel').style.display='flex';
+  }
+  _closeProfile(){ document.getElementById('profile-panel').style.display='none'; }
+  /** Built with DOM calls and textContent, never innerHTML — squad names come
+   *  from a file that may have been edited by anyone. */
+  _renderProfile(){
+    const list=document.getElementById('profile-squads');
+    list.replaceChildren();
+    const {squads}=this._readProfile();
+    if(!squads.length){
+      const empty=document.createElement('div');
+      empty.className='profile-empty';
+      empty.textContent='No saved squads yet — build one in the editor, then save it here.';
+      list.appendChild(empty);
+      return;
+    }
+    const btn=(label,title,cls,onClick)=>{
+      const b=document.createElement('button');
+      b.type='button'; b.className=`nes-btn ${cls}`.trim(); b.textContent=label; b.title=title;
+      b.addEventListener('click',onClick); return b;
+    };
+    squads.forEach(s=>{
+      const row=document.createElement('div');
+      row.className='profile-squad'; row.dataset.squadId=s.id;
+      const name=document.createElement('input');
+      name.type='text'; name.className='pixel-select'; name.maxLength=24; name.value=s.name;
+      name.setAttribute('aria-label','Squad name');
+      name.addEventListener('change',()=>this._profileRename(s.id,name.value));
+      const meta=document.createElement('div');
+      meta.className='meta';
+      meta.textContent=`${s.formation} · ${s.slots.filter(x=>x!=null).length}/11 + ${s.bench.length} bench · ${new Date(s.savedAt).toLocaleDateString()}`;
+      row.append(
+        name,
+        btn('Load','Load into the editor','is-primary',()=>this._profileLoad(s.id)),
+        btn('Update','Overwrite with the squad currently in the editor','',()=>this._profileUpdate(s.id)),
+        btn('✕','Delete','is-error',()=>this._profileDelete(s.id)),
+        meta
+      );
+      list.appendChild(row);
+    });
+  }
+  _profileSnapshot(name){
+    return {
+      name,
+      formation:this.chosenFormation,
+      slots:this.squadSlots.slice(),
+      bench:[...this.benchIds],
+      savedAt:Date.now()
+    };
+  }
+  _profileSaveCurrent(){
+    const profile=this._readProfile();
+    const name=(document.getElementById('squad-team-name').value.trim()||`Squad ${profile.squads.length+1}`).slice(0,24);
+    const snap=this._profileSnapshot(name);
+    // Same name = same squad: saving again updates it instead of stacking duplicates.
+    const existing=profile.squads.find(s=>s.name.toLowerCase()===name.toLowerCase());
+    if(existing) Object.assign(existing,snap);
+    else profile.squads.push({...snap,id:`sq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`});
+    if(!this._writeProfile(this._cleanProfile(profile))) return;
+    this._renderProfile();
+    this._profileStatus(existing?`Updated "${name}"`:`Saved "${name}"`);
+  }
+  _profileLoad(id){
+    const s=this._readProfile().squads.find(x=>x.id===id); if(!s) return;
+    this._applySavedSquad(s);
+    this._closeProfile();
+  }
+  _profileUpdate(id){
+    const profile=this._readProfile();
+    const s=profile.squads.find(x=>x.id===id); if(!s) return;
+    Object.assign(s,this._profileSnapshot(s.name));
+    if(!this._writeProfile(this._cleanProfile(profile))) return;
+    this._renderProfile();
+    this._profileStatus(`Updated "${s.name}" with your current squad`);
+  }
+  _profileRename(id,newName){
+    const profile=this._readProfile();
+    const s=profile.squads.find(x=>x.id===id); if(!s) return;
+    s.name=newName.trim().slice(0,24)||s.name;
+    if(this._writeProfile(profile)) this._profileStatus(`Renamed to "${s.name}"`);
+    this._renderProfile();
+  }
+  _profileDelete(id){
+    const profile=this._readProfile();
+    profile.squads=profile.squads.filter(x=>x.id!==id);
+    if(this._writeProfile(profile)){ this._renderProfile(); this._profileStatus('Squad deleted'); }
+  }
+  _profileSetPlayerName(name){
+    const profile=this._readProfile();
+    profile.playerName=name.trim().slice(0,24);
+    this._writeProfile(profile);
+  }
+  _profileDownload(){
+    const blob=new Blob([JSON.stringify(this._readProfile(),null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download='inazuma-profile.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    this._profileStatus('Profile downloaded');
+  }
+  /** Merges rather than replaces: the file's name wins if it has one, and its
+   *  squads overwrite same-named local ones, but nothing else is lost. */
+  async _profileImport(file){
+    if(!file) return;
+    let incoming;
+    try{
+      const parsed=JSON.parse(await file.text());
+      if(!parsed||typeof parsed!=='object'||!Array.isArray(parsed.squads)) throw new Error('not a profile file');
+      incoming=this._cleanProfile(parsed);
+    }catch(err){
+      this._profileStatus(`Couldn't import: ${err.message}`,true);
+      return;
+    }
+    const profile=this._readProfile();
+    if(incoming.playerName) profile.playerName=incoming.playerName;
+    incoming.squads.forEach(s=>{
+      const i=profile.squads.findIndex(x=>x.name.toLowerCase()===s.name.toLowerCase());
+      if(i>=0) profile.squads[i]={...s,id:profile.squads[i].id};
+      else profile.squads.push(s);
+    });
+    if(!this._writeProfile(this._cleanProfile(profile))) return;
+    document.getElementById('profile-name').value=profile.playerName;
+    this._renderProfile();
+    this._profileStatus(`Imported ${incoming.squads.length} squad(s)`);
   }
 
   /** The pitch/bench ("formation") and the searchable player list ("players")
@@ -1160,7 +1336,17 @@ export default class GameScene extends Phaser.Scene {
       const takeAny=()=>{ for(const l of Object.values(byPos)) if(l.length) return l.pop().id; return null; };
       for(let i=0;i<slots.length;i++) if(!slots[i]) slots[i]=take(roles[i])||takeAny();
     }
-    return {starterIds:slots.filter(Boolean),benchIds:[...this.rivalBenchIds],formation:this.rivalFormation};
+    return {starterIds:slots.filter(Boolean),benchIds:[...this.rivalBenchIds],formation:this.rivalFormation,name:this._rivalName||'Rival'};
+  }
+  /** The name shown beside your goals on the scoreboard: the squad editor's
+   *  team-name field, falling back to the profile's player name. */
+  _myTeamName(){
+    const typed=document.getElementById('squad-team-name').value.trim();
+    return (typed||this._readProfile().playerName||'').slice(0,24);
+  }
+  _setScoreboardNames(nameA,nameB){
+    document.getElementById('score-name-a').textContent=nameA||'';
+    document.getElementById('score-name-b').textContent=nameB||'';
   }
 
   /** Drops whichever pitch/bench player is currently selected back into the
@@ -1752,7 +1938,7 @@ export default class GameScene extends Phaser.Scene {
 
   _confirmSquad(){
     const starterIds=this.squadSlots.filter(Boolean); if(starterIds.length!==TEAM_SIZE) return;
-    const payload={starterIds,benchIds:[...this.benchIds],formation:this.chosenFormation,color:this.myTeamColor};
+    const payload={starterIds,benchIds:[...this.benchIds],formation:this.chosenFormation,color:this.myTeamColor,name:this._myTeamName()};
     if(this.uiMode==='tournament'){ this._startTournamentWithSquad(payload); return; }
     this.mySquadPayload=payload; this.mySquadConfirmed=true;
     this.net.sendSquad(payload);
@@ -1863,6 +2049,7 @@ export default class GameScene extends Phaser.Scene {
     this.editSide='rival';
     this._fillSquadByPosition(pool);
     this.editSide=prevSide;
+    this._rivalName=this._entrantLabel(entrantId);
   }
 
   /** The pre-squad setup screen (reached from the mode-select "🏆
@@ -1903,7 +2090,10 @@ export default class GameScene extends Phaser.Scene {
     const built=type==='knockout'
       ?makeSeededKnockout(['me',...opponents.slice().sort((a,b)=>this._entrantStrength(b)-this._entrantStrength(a))])
       :makeLeague(['me',...opponents]);
-    this.activeTournament={...built,mySquad};
+    // Half length is picked once, in the editor this squad was just built
+    // in, and rides along with the tournament: every fixture ends in a page
+    // reload (see _returnToMenu) that would otherwise reset it to the default.
+    this.activeTournament={...built,mySquad,halfLengthS:this.halfLengthS};
     saveTournament(this.activeTournament);
     document.getElementById('squad-editor-panel').style.display='none';
     document.getElementById('tournament-panel').style.display='flex';
@@ -1917,6 +2107,11 @@ export default class GameScene extends Phaser.Scene {
     const opponent=pending.a==='me'?pending.b:pending.a;
     this._setRivalToEntrant(opponent);
     this._tournamentPendingFixture=pending;
+    if(this.activeTournament.halfLengthS){
+      this.halfLengthS=this.activeTournament.halfLengthS;
+      this.matchClock.secondsRemaining=this.halfLengthS;
+      this._renderClock(this.matchClock);
+    }
     document.getElementById('tournament-panel').style.display='none';
     this._startMatch(this.activeTournament.mySquad,this._rivalSquadPayload());
   }
@@ -1952,7 +2147,7 @@ export default class GameScene extends Phaser.Scene {
             <label style="font-size:13px;"><input type="radio" name="tournament-size" value="8"> 8</label>
             <label style="font-size:13px;"><input type="radio" name="tournament-size" value="16"> 16</label>
           </div>
-          <div style="font-size:11px;opacity:.7;margin-bottom:10px;text-align:center;">Next, build your squad — it locks in for the whole tournament once it starts. Opponents are drawn at random from the game's real teams; in a knockout they get tougher each round you win, a league stays one flat difficulty throughout.</div>
+          <div style="font-size:11px;opacity:.7;margin-bottom:10px;text-align:center;">Next, build your squad and pick the half length — both lock in for the whole tournament once it starts. Opponents are drawn at random from the game's real teams; in a knockout they get tougher each round you win, a league stays one flat difficulty throughout.</div>
           <div style="text-align:center;"><button class="nes-btn is-primary" data-tournament-action="setup-continue">Continue</button></div>
         </div>`;
       return;
@@ -1972,7 +2167,7 @@ export default class GameScene extends Phaser.Scene {
       </div>`;
     };
     const headerHtml=`<div style="font-size:12px;opacity:.75;margin-bottom:4px;">${t.type==='knockout'?'Knockout':'League'} — ${t.entrants.length} teams</div>
-      <div style="font-size:11px;opacity:.7;margin-bottom:10px;">Your squad: ${t.mySquad?.formation||'?'} (locked for this tournament)</div>`;
+      <div style="font-size:11px;opacity:.7;margin-bottom:10px;">Your squad: ${t.mySquad?.formation||'?'}${t.halfLengthS?` · ${Math.round(t.halfLengthS/60)} min halves`:''} (locked for this tournament)</div>`;
     let bodyHtml;
     if(t.type==='knockout'){
       bodyHtml=`${headerHtml}<div style="display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;max-width:100%;">
@@ -2069,6 +2264,7 @@ export default class GameScene extends Phaser.Scene {
     this.gkIdA=this._findGkId(payloadA.starterIds);
     this.gkIdB=this._findGkId(payloadB.starterIds);
     this.activeIdA=this.teamA[0]?.id; this.activeIdB=this.teamB[0]?.id;
+    this._setScoreboardNames(payloadA.name||'You',payloadB.name||(this.uiMode==='multiplayer'?'Opponent':'Rival'));
     this.matchStarted=true;
     // Coin toss for the first half; _tickClock hands the second to the other
     // side, so each half is started by a different team.
@@ -2092,6 +2288,7 @@ export default class GameScene extends Phaser.Scene {
     this.gkIdA=this._findGkId(this.remoteSquadPayload.starterIds);
     this.gkIdB=this._findGkId(this.mySquadPayload.starterIds);
     this.clientTeamsBuilt=true;
+    this._setScoreboardNames(this.remoteSquadPayload.name||'Opponent',this.mySquadPayload.name||'You');
     document.getElementById('sub-button').style.display='block';
     document.getElementById('scroll-controls').style.display='flex';
   }
