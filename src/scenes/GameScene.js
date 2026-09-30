@@ -1363,18 +1363,17 @@ export default class GameScene extends Phaser.Scene {
     if(this.rosterAll?.length) this._ratingBaselineCache=base;
     return base;
   }
-  /** The better half (or whatever `frac` says) of `pool`, kept separate
-   *  per position — so "top players" still gives a formation-fillable
-   *  spread of keepers/defenders/midfielders/forwards instead of, say,
-   *  skewing toward whichever position happens to rate marginally
-   *  higher on average. */
-  _topPercentileByPosition(pool,frac=0.2){
+  /** The `n` best-rated players of each position in `pool`, as
+   *  `{GK:[...], DF:[...], ...}` — ranked within their own position so
+   *  "top 10" means the top 10 keepers, the top 10 defenders, and so on. */
+  _topNByPosition(pool,n){
     const byPos={};
     for(const p of pool) (byPos[p.position]=byPos[p.position]||[]).push(p);
-    return Object.values(byPos).flatMap(list=>{
-      list.sort((a,b)=>this._ratingRaw(b)-this._ratingRaw(a));
-      return list.slice(0,Math.max(1,Math.ceil(list.length*frac)));
-    });
+    for(const pos in byPos){
+      byPos[pos].sort((a,b)=>this._ratingRaw(b)-this._ratingRaw(a));
+      byPos[pos]=byPos[pos].slice(0,n);
+    }
+    return byPos;
   }
   /** Average rating across a set of roster ids (a squad's XI, say) — null
    *  if there's nobody to average yet. */
@@ -1712,14 +1711,13 @@ export default class GameScene extends Phaser.Scene {
     this._renderPitch(); this._renderPickList();
   }
 
-  /** Rolls a random formation, then fills the XI with a blend: 2–3 slots
-   *  (chosen at random) get a top-rated player for their position (see
-   *  _topPercentileByPosition), the rest get an ordinary random one — a
-   *  few standout names in an otherwise unpredictable squad, rather than
-   *  either fully random (usually mediocre) or stacking every slot with a
-   *  star (no surprise left at all). Falls back to whichever pool actually
-   *  has a candidate left, same spirit as _fillSquadByPosition's own
-   *  backfill, so a thin position never leaves a slot empty. */
+  /** Rolls a random formation, then fills the XI with three guaranteed
+   *  standouts in random slots — one from the top 10 of that slot's
+   *  position, two from the top 30 (see _topNByPosition) — and ordinary
+   *  random picks everywhere else, so every roll has a few real stars in
+   *  an otherwise unpredictable squad. A star pool with nobody left for a
+   *  role falls back to an ordinary pick, and _fillSquadByPosition-style
+   *  backfill means a thin position never leaves a slot empty. */
   _randomize(){
     // Shape first, then fill it position by position — the slot roles depend
     // on the formation, so picking it afterwards would mismatch them.
@@ -1727,24 +1725,23 @@ export default class GameScene extends Phaser.Scene {
     document.getElementById('formation-select').value=this._edFormation();
 
     const roles=SLOT_ROLES[this._edFormation()]||SLOT_ROLES[DEFAULT_FORMATION];
-    const byPos={}, byPosTop={};
+    const byPos={};
     for(const p of this.rosterAll) (byPos[p.position]=byPos[p.position]||[]).push(p);
-    for(const p of this._topPercentileByPosition(this.rosterAll)) (byPosTop[p.position]=byPosTop[p.position]||[]).push(p);
-    Object.values(byPos).forEach(list=>Phaser.Utils.Array.Shuffle(list));
-    Object.values(byPosTop).forEach(list=>Phaser.Utils.Array.Shuffle(list));
+    const top10=this._topNByPosition(this.rosterAll,10), top30=this._topNByPosition(this.rosterAll,30);
+    [byPos,top10,top30].forEach(map=>Object.values(map).forEach(list=>Phaser.Utils.Array.Shuffle(list)));
 
-    // Both pools draw from the same players, so track who's already placed
-    // to avoid picking the same person for two slots.
+    // The pools overlap (top 10 ⊂ top 30 ⊂ everyone), so track who's
+    // already placed to avoid picking the same person for two slots.
     const used=new Set();
     const take=(map,pos)=>{ const l=map[pos]; while(l&&l.length){ const p=l.pop(); if(!used.has(p.id)){ used.add(p.id); return p.id; } } return null; };
     const takeAny=map=>{ for(const l of Object.values(map)) while(l&&l.length){ const p=l.pop(); if(!used.has(p.id)){ used.add(p.id); return p.id; } } return null; };
 
-    const starCount=Phaser.Math.Between(2,3);
-    const starSlots=new Set(Phaser.Utils.Array.Shuffle([...Array(TEAM_SIZE).keys()]).slice(0,starCount));
-    const slots=roles.slice(0,TEAM_SIZE).map((role,i)=>
-      starSlots.has(i) ? (take(byPosTop,role)??take(byPos,role)) : (take(byPos,role)??take(byPosTop,role))
-    );
-    for(let i=0;i<TEAM_SIZE;i++) if(!slots[i]) slots[i]=takeAny(byPos)??takeAny(byPosTop);
+    const slots=Array(TEAM_SIZE).fill(null);
+    const [top10Slot,...top30Slots]=Phaser.Utils.Array.Shuffle([...Array(TEAM_SIZE).keys()]).slice(0,3);
+    slots[top10Slot]=take(top10,roles[top10Slot])??take(byPos,roles[top10Slot]);
+    for(const i of top30Slots) slots[i]=take(top30,roles[i])??take(byPos,roles[i]);
+    for(let i=0;i<TEAM_SIZE;i++) if(!slots[i]) slots[i]=take(byPos,roles[i]);
+    for(let i=0;i<TEAM_SIZE;i++) if(!slots[i]) slots[i]=takeAny(byPos);
     this._edSetSlots(slots);
     this._edSetBench(new Set(BENCH_COVER.map(pos=>take(byPos,pos)??takeAny(byPos)).filter(Boolean)));
 
