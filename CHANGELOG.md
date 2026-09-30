@@ -4,6 +4,23 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## A gentler AI on Normal
+The smarter AI turned out too sharp on Normal, so how hard the rival
+defends and attacks now scales with difficulty (new `AI_LEVELS` fields):
+
+| | Easy | Normal | Hard | Expert |
+|---|---|---|---|---|
+| Second presser engages within | 150px | 180px (was 230) | 230 | 260 |
+| Marks runners within | 150px | 180px (was 220) | 220 | 240 |
+| Marking tightness | 0.35 | 0.45 (was 0.6) | 0.6 | 0.7 |
+| Through-ball chance | 15% | 30% (was 50%) | 80% | 100% |
+| Extra pass range | 0 | 0 (was 40px) | 100 | 160 |
+| Best-aim chance on shots | 30% | 50% (was 65%) | 85% | 100% |
+
+Hard keeps exactly the previous behaviour, and Expert pushes a little
+further. This only applies to the AI rival: your own teammates, and both
+sides in multiplayer, keep the Hard defaults.
+
 ## Remaining duplicate players cleaned up
 An audit of the roster found a few duplicates the earlier clean-up
 (which only removed exact copies) had missed. `scripts/dedupe-roster.mjs`

@@ -301,12 +301,15 @@ const RATING_WEIGHTS = {
 // `vision` extends the longest pass it will look for (px) and `through` is
 // the chance it considers a through ball behind your line on any one pass.
 // `aimSkill` is the chance it picks the best spot in the goal to shoot at
-// (see _aiPickShotAim) rather than a random one.
+// (see _aiPickShotAim) rather than a random one. `press`, `markRange` and
+// `markBlend` tune how hard its defence closes you down and tracks your
+// runners (see _defensivePlan); your own teammates always use the
+// PRESS_ENGAGE_RANGE / MARK_RANGE / MARK_BLEND defaults (= hard).
 const AI_LEVELS = {
-  easy:   { techChance:0.70, shootRange:420, shootChance:0.70, passChance:0.022, statMul:1.00, vision:0,   through:0.3, aimSkill:0.40 },
-  normal: { techChance:0.75, shootRange:445, shootChance:0.75, passChance:0.024, statMul:1.04, vision:40,  through:0.5, aimSkill:0.65 },
-  hard:   { techChance:0.90, shootRange:530, shootChance:0.90, passChance:0.034, statMul:1.18, vision:100, through:0.8, aimSkill:0.85 },
-  expert: { techChance:0.97, shootRange:620, shootChance:0.97, passChance:0.042, statMul:1.30, vision:160, through:1.0, aimSkill:1.00 }
+  easy:   { techChance:0.70, shootRange:420, shootChance:0.70, passChance:0.022, statMul:1.00, vision:0,   through:0.15, aimSkill:0.30, press:150, markRange:150, markBlend:0.35 },
+  normal: { techChance:0.75, shootRange:445, shootChance:0.75, passChance:0.024, statMul:1.04, vision:0,   through:0.30, aimSkill:0.50, press:180, markRange:180, markBlend:0.45 },
+  hard:   { techChance:0.90, shootRange:530, shootChance:0.90, passChance:0.034, statMul:1.18, vision:100, through:0.80, aimSkill:0.85, press:230, markRange:220, markBlend:0.60 },
+  expert: { techChance:0.97, shootRange:620, shootChance:0.97, passChance:0.042, statMul:1.30, vision:160, through:1.00, aimSkill:1.00, press:260, markRange:240, markBlend:0.70 }
 };
 const AI_LEVEL_DEFAULT = 'normal';
 const AI_SPEED_BONUS_SHARE = 0.5; // movement gets half the stat inflation
@@ -2507,7 +2510,11 @@ export default class GameScene extends Phaser.Scene {
     const goalSide=y=>Math.sign(ownGoalY-y)||1;
     const eligible=team.filter(e=>e.slot!==0&&e.id!==activeId&&e.body&&!this._isOut(role,e.id)&&!this._isStunned(e.id,now));
 
-    let presser=null, pressD=PRESS_ENGAGE_RANGE;
+    // The AI rival's defence is tuned by difficulty; everyone else (your
+    // teammates, either side in multiplayer) gets the defaults.
+    const lvl=(role==='B'&&!this.net.hasPeer())?this._aiParams():{};
+    const pressRange=lvl.press??PRESS_ENGAGE_RANGE, markRange=lvl.markRange??MARK_RANGE, markBlend=lvl.markBlend??MARK_BLEND;
+    let presser=null, pressD=pressRange;
     for(const e of eligible){
       const d=Phaser.Math.Distance.Between(e.body.position.x,e.body.position.y,cp.x,cp.y);
       if(d<pressD){ pressD=d; presser=e; }
@@ -2524,7 +2531,7 @@ export default class GameScene extends Phaser.Scene {
       for(const r of runners){
         const rp=r.body.position;
         const d=Phaser.Math.Distance.Between(home.x,home.y,rp.x,rp.y);
-        if(d>MARK_RANGE) continue;
+        if(d>markRange) continue;
         const dangerous=Math.abs(ownGoalY-rp.y)<ballGoalDist;
         pairs.push({m,r,cost:d-(dangerous?MARK_DANGER_BONUS:0)});
       }
@@ -2540,7 +2547,7 @@ export default class GameScene extends Phaser.Scene {
       jobs.set(m.id,{
         x:rp.x+(bp.x-rp.x)*MARK_BALL_SHIFT,
         y:rp.y+goalSide(rp.y)*MARK_GOAL_SIDE,
-        blend:MARK_BLEND,
+        blend:markBlend,
         runnerId:r.id
       });
     }

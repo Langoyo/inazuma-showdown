@@ -76,6 +76,34 @@ test.describe('AI defending', () => {
   });
 });
 
+test.describe('AI defence by difficulty', () => {
+  test('on normal the rival presses from closer in and marks more loosely than on hard', async ({ page }) => {
+    await setup(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene, { put, park, outfield } = window.__ai;
+      const run = (level) => {
+        park();
+        s.aiLevel = level;
+        const [carrier, runner] = outfield(s.teamA);
+        const [chaser, near, ...defenders] = outfield(s.teamB);
+        s.possRole = 'A'; s.activeIdA = carrier.id; s.activeIdB = chaser.id;
+        put(carrier, 480, 760); put(chaser, 480, 730);
+        put(near, 480 + 200, 760);   // 200px away: inside hard's press range, outside normal's
+        window.__ai.putBall(480, 760);
+        const d1 = defenders.find((e) => e.slot >= 1 && e.slot <= 4);
+        const home = s._formPos('B', d1.slot, s.ball.position);
+        put(runner, home.x, home.y + 60);
+        const plan = s._defensivePlan('B', chaser.id, carrier);
+        return { pressed: plan.get(near.id)?.blend === 1, markBlend: [...plan.values()].find((j) => j.runnerId === runner.id)?.blend };
+      };
+      return { normal: run('normal'), hard: run('hard') };
+    });
+    expect(r.hard.pressed).toBe(true);
+    expect(r.normal.pressed).toBe(false);
+    expect(r.normal.markBlend).toBeLessThan(r.hard.markBlend);
+  });
+});
+
 test.describe('spacing and width off the ball', () => {
   test('a target on top of a teammate is pushed out of their space; a clear one is left alone', async ({ page }) => {
     await setup(page);
