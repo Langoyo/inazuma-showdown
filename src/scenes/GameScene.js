@@ -587,7 +587,14 @@ export default class GameScene extends Phaser.Scene {
     this.remoteInput={targets:[],shootRequest:false,passTarget:null,confrontationChoice:null,subRequest:null,repositionRequest:null,formationChange:null,teamPanelRequest:null};
     this.net.onInput(d=>{ this.remoteInput=d; });
     this.net.onState(d=>this._incomingState(d));
-    this.net.onSquad(d=>{ this.remoteSquadPayload=d; this._tryStartMultiplayerMatch(); });
+    this.net.onSquad(d=>this._onRemoteSquad(d));
+  }
+  /** `{retracted:true}` is the opponent backing out of the squad editor after
+   *  confirming (see _backToModeSelect) — forget their squad so a match can't
+   *  start against someone who has left. */
+  _onRemoteSquad(d){
+    this.remoteSquadPayload=d?.retracted?null:d;
+    this._tryStartMultiplayerMatch();
   }
 
   /** Leaves the current room and joins a different one — used when the
@@ -663,6 +670,23 @@ export default class GameScene extends Phaser.Scene {
     document.getElementById('mode-own-code').textContent=this.roomCode;
     const hasActive=this.activeTournament&&!this.activeTournament.completedAt;
     document.getElementById('mode-tournament-btn').textContent=hasActive?'🏆 Continue Tournament':'🏆 Tournament';
+  }
+
+  /** "← Menu" in the squad editor. The squad you've built stays in memory, so
+   *  switching mode doesn't cost you the work. A multiplayer squad you'd
+   *  already confirmed is withdrawn first, locally and from the opponent. */
+  _backToModeSelect(){
+    if(this.mySquadConfirmed){
+      this.mySquadConfirmed=false; this.mySquadPayload=null;
+      if(this._squadRetryTimer){ clearInterval(this._squadRetryTimer); this._squadRetryTimer=null; }
+      try{ this.net.sendSquad({retracted:true}); }catch{ /* no peer to tell */ }
+      this._renderPitch(); // Confirm was disabled while waiting
+    }
+    this._squadSel=null; this._pickPosFilter=null;
+    document.getElementById('squad-status').textContent='';
+    document.getElementById('player-stat-panel').style.display='none';
+    document.getElementById('squad-editor-panel').style.display='none';
+    this._showModeSelect();
   }
 
   /** A real opponent always picks their own squad, so the "Rival Team" tab
@@ -997,6 +1021,7 @@ export default class GameScene extends Phaser.Scene {
       e.target.value=''; // so re-importing the same file fires change again
     });
     document.getElementById('tournament-back-btn').addEventListener('click',()=>this._closeTournamentPanel());
+    document.getElementById('squad-back-btn').addEventListener('click',()=>this._backToModeSelect());
     // The setup form and the running bracket/table are both re-rendered
     // wholesale on every change (see _renderTournamentPanel), so their
     // buttons are delegated here once rather than re-bound after every

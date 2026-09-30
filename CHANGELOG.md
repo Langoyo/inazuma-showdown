@@ -5,6 +5,12 @@ this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
 ## Tournament match length, team names on the scoreboard, downloadable profile
+- **Back to the menu from the squad editor.** A "← Menu" button at the top
+  of the editor returns to the mode-select screen without losing the squad
+  you've built, so you can switch between solo, multiplayer and tournament.
+  If you had already confirmed a multiplayer squad, backing out withdraws it
+  (locally, and by sending the opponent a `{retracted:true}` squad, handled
+  in `_onRemoteSquad`) so a match can't start against someone who has left.
 - **Match length is picked once per tournament.** Every fixture ends in a
   page reload, which reset the half length to the default, so it had to be
   reselected before each match. The half length chosen in the squad editor
