@@ -3706,6 +3706,8 @@ export default class GameScene extends Phaser.Scene {
     // state for its client to interpolate toward (see _hostUpdate).
     this._setPaused(true);
     this.time.delayedCall(GOAL_PAUSE_MS,()=>{
+      // A golden goal: the celebration is the end of the match.
+      if(this.matchClock.overtime){ this.matchClock.ended=true; return; }
       this._setPaused(false);
       // Clear the banner right as play resumes, same reasoning as the
       // half-time transition: left alone, _setPaused's own _shiftTimers
@@ -3864,6 +3866,9 @@ export default class GameScene extends Phaser.Scene {
   // ════════════════════════════════════════════════════════════════════
   _tickClock(delta){
     if(this.matchClock.ended) return;
+    // Golden-goal overtime has no clock to run out — it counts up instead,
+    // and only a goal ends it (see _onGoal).
+    if(this.matchClock.overtime){ this.matchClock.otElapsed+=delta/1000; return; }
     this.matchClock.secondsRemaining-=delta/1000;
     if(this.matchClock.secondsRemaining<=0){
       if(this.matchClock.half===1){
@@ -3882,13 +3887,26 @@ export default class GameScene extends Phaser.Scene {
           this.confrontResult=null;
         });
       }
+      else if(this.score.a===this.score.b&&this._tournamentPendingFixture?.kind!=='league') this._startOvertime();
       else { this.matchClock.ended=true; this.matchClock.secondsRemaining=0; }
     }
+  }
+  /** Level at full time: golden-goal overtime, as long as it takes — the next
+   *  goal wins. Not in a league fixture, where a draw is a result that
+   *  earns each side a point. Set up like the half-time break: line up,
+   *  freeze for a beat, then play on. */
+  _startOvertime(){
+    Object.assign(this.matchClock,{overtime:true,otElapsed:0,secondsRemaining:0});
+    this._kickoff(this.kickoffRole,'Overtime — next goal wins!',HALFTIME_PAUSE_MS);
+    this._setPaused(true);
+    this.time.delayedCall(HALFTIME_PAUSE_MS,()=>{ this._setPaused(false); this.confrontResult=null; });
   }
   static _fmtClock(s){ s=Math.max(0,Math.ceil(s)); const m=Math.floor(s/60),r=s%60; return `${m}:${r<10?'0':''}${r}`; }
   _renderClock(c){
     if(!c) return;
-    document.getElementById('match-clock').textContent=c.ended?'Full time':`${c.half===1?'1st':'2nd'} half — ${GameScene._fmtClock(c.secondsRemaining)}`;
+    document.getElementById('match-clock').textContent=c.ended?'Full time'
+      :c.overtime?`Overtime — ${GameScene._fmtClock(c.otElapsed||0)} · golden goal`
+      :`${c.half===1?'1st':'2nd'} half — ${GameScene._fmtClock(c.secondsRemaining)}`;
     if(c.ended) this._showFullTime();
   }
 
@@ -3910,7 +3928,8 @@ export default class GameScene extends Phaser.Scene {
     // that reload otherwise.
     if(this._tournamentPendingFixture&&this.role==='A') this._recordTournamentResult(this._tournamentPendingFixture,mine,theirs);
     document.getElementById('fulltime-score').textContent=scoreTxt;
-    document.getElementById('fulltime-verdict').textContent=mine>theirs?'You win!':mine<theirs?'You lose':'Draw';
+    const ot=(this.role==='A'?this.matchClock:this.remoteState?.clock)?.overtime?' in overtime':'';
+    document.getElementById('fulltime-verdict').textContent=mine>theirs?`You win${ot}!`:mine<theirs?`You lose${ot}`:'Draw';
     document.getElementById('confrontation-ui').style.display='none';
     document.getElementById('duel-reveal').style.display='none';
     document.getElementById('fulltime-panel').style.display='flex';
@@ -4033,7 +4052,7 @@ export default class GameScene extends Phaser.Scene {
         a:this.teamA.filter(e=>this._isOut('A',e.id)).map(e=>e.id),
         b:this.teamB.filter(e=>this._isOut('B',e.id)).map(e=>e.id)
       };
-      this.net.sendState({matchStarted:true,ball:{x:this.ball.position.x,y:this.ball.position.y},ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>({x:e.body.position.x,y:e.body.position.y})),teamB:this.teamB.map(e=>({x:e.body.position.x,y:e.body.position.y})),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,attackerLocked:!!this.confrontation.attackerLocked,solo:!!this.confrontation.solo,keeperReach:this.confrontation.keeperReach??null,shotLine:this.confrontation.shotLine||null}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)},clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended},stuns:stunAry,teamPanelOpen:this.teamPanelOpen});
+      this.net.sendState({matchStarted:true,ball:{x:this.ball.position.x,y:this.ball.position.y},ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>({x:e.body.position.x,y:e.body.position.y})),teamB:this.teamB.map(e=>({x:e.body.position.x,y:e.body.position.y})),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,attackerLocked:!!this.confrontation.attackerLocked,solo:!!this.confrontation.solo,keeperReach:this.confrontation.keeperReach??null,shotLine:this.confrontation.shotLine||null}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)},clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended,overtime:!!this.matchClock.overtime,otElapsed:this.matchClock.otElapsed||0},stuns:stunAry,teamPanelOpen:this.teamPanelOpen});
     }
   }
 

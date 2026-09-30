@@ -4,6 +4,18 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Golden-goal overtime
+A match that's level when the second half runs out no longer ends in a
+draw. It goes to overtime (`_startOvertime`): a break with an "Overtime —
+next goal wins!" banner, the side that kicked off the match kicks off
+again, then play goes on with no time limit. The scoreboard clock counts
+up ("Overtime — 1:12 · golden goal"). The first goal ends the match after
+its celebration, and the full-time screen says "You win in overtime!" or
+"You lose in overtime". League tournament fixtures are the exception:
+there a draw is a real result worth a point each, so they still end
+level. Knockout fixtures now always get a winner on the pitch instead of
+a coin flip.
+
 ## Aimed shots, keeper reach, chain shots and a shot preview
 - **Tap to shoot, then aim and pick.** With the ball, one tap in the goal
   area shoots. Play freezes on a solo "strike" stage, aimed at the tapped
