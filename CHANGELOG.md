@@ -5,11 +5,13 @@ this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
 ## Aimed shots, keeper reach, chain shots and a shot preview
-- **Aim, then shoot.** With the ball, the first tap in the goal area sets
-  where the shot goes (clamped inside the posts). The second tap in the
-  goal area fires at that spot. A tap anywhere else while aimed just drops
-  the aim. `shootRequest` is now the aimed point `{x,y}`, so a multiplayer
-  guest aims too.
+- **Tap to shoot, then aim and pick.** With the ball, one tap in the goal
+  area shoots. Play freezes on a solo "strike" stage, aimed at the tapped
+  spot (clamped inside the posts). While it's frozen, tapping the goal
+  moves the aim (`_setShotAim`, sent as `shotAim` input so a multiplayer
+  guest aims too). Picking a supertechnique or "Normal shot" fires at the
+  current aim; if the timer runs out it's a normal shot. Penalties get the
+  same pause.
 - **Keeper reach.** Keepers now slide along their line after the ball to
   cover the near post (`KEEPER_TRACK`). The keeper's save power is scaled
   by how close they stand to the shot's line (`_keeperReach`: full within
@@ -19,20 +21,22 @@ and how to run it, see [`README.md`](./README.md).
 - **Chain shots.** The first teammate standing on the shot's line (within
   60px, same stretch of it as a blocker) can chain onto it with a shot
   supertechnique of their own, adding its power to the shot. "Let it run"
-  adds nothing, and a teammate without the PT is skipped. A shot now runs
-  as a short sequence (`_startShot` / `shotSeq`) in the order the ball
-  meets things: blocker and/or chainer, then keeper. The shooter picks
-  once, in the first stage, and a solo "strike" pick comes first when a
-  chainer is the first thing on the line. Power carries through: a beaten
-  blocker still trims it (`BLOCK_PASS_PENALTY`), and the VS card shows the
-  combined move, e.g. "Fire Tornado + Dragon Tornado". Penalties skip
-  blockers and chainers.
+  adds nothing, and a teammate without the PT is skipped. The line and the
+  rest of the sequence (`_buildShotStages`) are worked out when the strike
+  fires, from the final aim. The ball then meets things in order: blocker
+  and/or chainer, then keeper. The shooter is locked in after the strike,
+  and the strike banner doesn't name their technique, so the keeper still
+  picks blind. Power carries through: a beaten blocker still trims it
+  (`BLOCK_PASS_PENALTY`), and the VS card shows the combined move, e.g.
+  "Fire Tornado + Dragon Tornado". Penalties skip blockers and chainers.
 - **Shot preview.** While you have the ball the goal mouth is lit as the
-  shooting area. Once aimed, a dashed line runs from your carrier to the
-  aim, with the would-be blocker ringed red, a teammate who can chain
-  ringed gold (dimmed without PT), and the keeper ringed by reach, green
-  to red, with a "Keeper reach N%" label. The same line shows on both
-  screens while a shot is being played out.
+  shooting area. From the strike pause on, the shot is drawn as a cone
+  from the kicker to the aimed spot. It's only drawn as a cone: blockers,
+  chainers and reach are judged along its centre line. The would-be
+  blocker is ringed red, a teammate who can chain is ringed gold (dimmed
+  without PT), and the keeper's ring goes green to red with their reach.
+  There's no on-pitch chance text; the save panel still shows the keeper's
+  reach %. It shows on both screens.
 - **AI aiming.** The AI picks the spot its opponent's keeper covers worst,
   avoiding blockers and favouring a teammate who can chain. New
   `aimSkill` per difficulty level sets how often it takes the best aim.

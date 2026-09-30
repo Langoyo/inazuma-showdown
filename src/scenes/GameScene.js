@@ -56,6 +56,7 @@ const SHOT_PATH_T_MIN     = 0.12;
 const SHOT_PATH_T_MAX     = 0.92;
 // Aimed shots: the aim sits on the goal line, no closer than this to a post.
 const GOAL_AIM_INSET      = 8;
+const SHOT_CONE_HALF      = 16;   // how wide the drawn cone is at the goal (visual only)
 // The keeper's save power scales with how close they are to the shot's line:
 // full within KEEPER_REACH_FULL, fading to nothing at KEEPER_REACH_MAX. A
 // keeper behind the kicker (dribbled past) can't get there at all.
@@ -467,8 +468,6 @@ export default class GameScene extends Phaser.Scene {
 
     this._drawField();
     this.pathGfx=this.add.graphics();
-    this.shotReachText=this.add.text(0,0,'',{fontSize:'11px',fontStyle:'bold',color:'#ffffff',stroke:'#000',strokeThickness:4,resolution:3})
-      .setOrigin(0.5,1).setDepth(9).setVisible(false);
 
     this.matter.world.setBounds(0,0,this.FIELD_W,this.FIELD_H);
     this.ball=this.matter.add.circle(this.FIELD_W/2,this.FIELD_H/2,10,
@@ -2836,16 +2835,13 @@ export default class GameScene extends Phaser.Scene {
   _pointerDown(pointer){
     if(!this.matchStarted||this.matchClock.ended) return;
     const w=this._toWorld(pointer.x,pointer.y);
-    // Shooting is two taps in the goal area: the first aims (and shows the
-    // shot's line — see _drawShotPreview), the second fires at that aim. A
-    // tap anywhere else while aimed just drops the aim.
-    if(this._iHavePossession()&&!this.confrontation){
-      if(this._inGoalRegion(w)){
-        if(this.shotAim){ this.pendingShoot={...this.shotAim}; this.shotAim=null; }
-        else this.shotAim=this._clampAim(this.role,w.x);
-        return;
-      }
-      if(this.shotAim){ this.shotAim=null; return; }
+    // A tap in the goal area shoots: play freezes in the strike stage (see
+    // _startShot), where further goal taps move the aim before the shot is
+    // picked.
+    if(this._inGoalRegion(w)){
+      const c=this.confrontation;
+      if(this._iHavePossession()&&!c){ this.pendingShoot=this._clampAim(this.role,w.x); return; }
+      if(c?.type==='strike'&&c.attackerRole===this.role&&!c.reveal){ this.pendingShotAim=this._clampAim(this.role,w.x); return; }
     }
     // Play is frozen during a confrontation, but drawing runs still works —
     // it's the natural moment to set up where everyone goes next. Only the
@@ -2982,39 +2978,33 @@ export default class GameScene extends Phaser.Scene {
     this._drawShotPreview();
   }
 
-  /** The shooting area and, once aimed (or while a shot is being played
-   *  out, from the synced shotLine), the shot's line: who'd block it (red),
-   *  who can chain it (gold, dimmed without the PT) and how well the keeper
-   *  covers it (their ring goes green → red as their reach grows). */
+  /** The shooting area while you have the ball and, while a shot is being
+   *  lined up or played out (the synced shotLine), a cone from the kicker to
+   *  the aimed spot — drawn as a cone, judged along its centre line — with
+   *  the would-be blocker ringed red, a teammate who can chain ringed gold
+   *  (dimmed without the PT) and the keeper ringed green → red by reach. */
   _drawShotPreview(){
-    const g=this.pathGfx, label=this.shotReachText;
-    label.setVisible(false);
-    const c=this.confrontation;
-    let from=null, to=null, aRole=null;
-    if(c?.shotLine){ from=c.shotLine.from; to=c.shotLine.to; aRole=c.attackerRole; }
-    else if(this._iHavePossession()&&!c){
-      const goalY=this.role==='A'?0:this.FIELD_H;
-      g.fillStyle(0xffe066,0.12);
-      g.fillRect(this.FIELD_W/2-GOAL_HALF_WIDTH,this.role==='A'?goalY:goalY-GOAL_CLICK_MARGIN,GOAL_HALF_WIDTH*2,GOAL_CLICK_MARGIN);
-      const e=this._activeEntry(this.role);
-      if(this.shotAim&&e){ const p=this._posOf(e); from={x:p.x,y:p.y}; to=this.shotAim; aRole=this.role; }
+    const g=this.pathGfx, c=this.confrontation;
+    if(!c?.shotLine){
+      if(this._iHavePossession()&&!c){
+        const goalY=this.role==='A'?0:this.FIELD_H;
+        g.fillStyle(0xffe066,0.12);
+        g.fillRect(this.FIELD_W/2-GOAL_HALF_WIDTH,this.role==='A'?goalY:goalY-GOAL_CLICK_MARGIN,GOAL_HALF_WIDTH*2,GOAL_CLICK_MARGIN);
+      }
+      return;
     }
-    if(!from||!to) return;
-    const path=this._shotPath(aRole,from,to);
+    const {from,to}=c.shotLine;
+    const path=this._shotPath(c.attackerRole,from,to);
     const reach=path.keeper?.reach??0;
     const reachColor=reach>0.66?0xff4d4d:reach>0.33?0xffb84d:0x5dff7a;
-    // Dashed line from the kicker to the aim.
-    const len=Math.hypot(to.x-from.x,to.y-from.y)||1, ux=(to.x-from.x)/len, uy=(to.y-from.y)/len;
-    g.lineStyle(2,0xffffff,0.85);
-    for(let d=0;d<len;d+=18){
-      const e2=Math.min(d+10,len);
-      g.beginPath(); g.moveTo(from.x+ux*d,from.y+uy*d); g.lineTo(from.x+ux*e2,from.y+uy*e2); g.strokePath();
-    }
-    g.lineStyle(3,reachColor,1); g.strokeCircle(to.x,to.y,9);
+    g.fillStyle(0xffffff,0.16);
+    g.fillTriangle(from.x,from.y,to.x-SHOT_CONE_HALF,to.y,to.x+SHOT_CONE_HALF,to.y);
+    g.lineStyle(1.5,0xffffff,0.7);
+    g.strokeTriangle(from.x,from.y,to.x-SHOT_CONE_HALF,to.y,to.x+SHOT_CONE_HALF,to.y);
+    g.lineStyle(3,reachColor,1); g.strokeCircle(to.x,to.y,8);
     if(path.blocker){ const p=this._posOf(path.blocker.entry); g.lineStyle(3,0xff4d4d,1); g.strokeCircle(p.x,p.y,19); }
     if(path.chainer){ const p=this._posOf(path.chainer.entry); g.lineStyle(3,0xffd23f,path.chainer.canChain?1:0.35); g.strokeCircle(p.x,p.y,19); }
     if(path.keeper){ const p=this._posOf(path.keeper.entry); g.lineStyle(3,reachColor,0.9); g.strokeCircle(p.x,p.y,19); }
-    label.setText(`Keeper reach ${Math.round(reach*100)}%`).setPosition(to.x,aRole==='A'?to.y+34:to.y-14).setColor(Phaser.Display.Color.IntegerToColor(reachColor).rgba).setVisible(true);
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -3403,46 +3393,55 @@ export default class GameScene extends Phaser.Scene {
     return Phaser.Math.Clamp(1-(d-KEEPER_REACH_FULL)/(KEEPER_REACH_MAX-KEEPER_REACH_FULL),0,1);
   }
 
-  /** A shot is a short sequence of stages along its line, in the order the
-   *  ball meets them: a blocker and/or one chaining teammate, then the
-   *  keeper. The shot's power (this.shotSeq.power) is set by the shooter's
-   *  own pick and grows with each chain; a beaten blocker trims it. When a
-   *  chainer is met before anything else, the shooter picks first in a solo
-   *  'strike' stage; otherwise they pick blind against that first defender,
-   *  exactly as before. */
+  /** A shot starts with a solo 'strike' stage: play is frozen while the
+   *  shooter moves their aim along the goal (see _setShotAim) and picks a
+   *  technique or a normal shot. Only once that's fired is the line worked
+   *  out and the rest of the sequence built, in the order the ball meets
+   *  things: a blocker and/or one chaining teammate, then the keeper. The
+   *  shot's power (shotSeq.power) is set by the shooter's pick and grows
+   *  with each chain; a beaten blocker trims it. `opts.noPath` (penalties)
+   *  goes straight from the strike to the keeper. */
   _startShot(aRole,dRole,now,opts={}){
-    playKick();
     const eAtk=this._activeEntry(aRole); if(!eAtk?.body) return;
-    const target=opts.target?this._clampAim(aRole,opts.target.x):this._clampAim(aRole,this.FIELD_W/2);
+    const target=this._clampAim(aRole,opts.target?opts.target.x:this.FIELD_W/2);
     const from={x:eAtk.body.position.x,y:eAtk.body.position.y};
+    this.shotSeq={aRole,dRole,target,from,noPath:!!opts.noPath,stages:[],idx:0,power:null,names:[],kickerId:eAtk.id,shooterId:eAtk.id};
+    this.confrontation={type:'strike',solo:true,attackerRole:aRole,defenderRole:dRole,attackerId:eAtk.id,defenderId:null,
+      deadline:now+CONFRONT_MS,attackerChoice:null,defenderChoice:'none',shotLine:{from:{...from},to:{...target}}};
+  }
+  /** Moves the aim of `role`'s shot while they're still lining it up. */
+  _setShotAim(role,point){
+    const c=this.confrontation, seq=this.shotSeq;
+    if(c?.type!=='strike'||c.attackerRole!==role||!seq||!point) return;
+    seq.target=this._clampAim(role,point.x);
+    c.shotLine={from:{...seq.from},to:{...seq.target}};
+  }
+  _buildShotStages(seq){
     const stages=[];
-    if(!opts.noPath){
-      const path=this._shotPath(aRole,from,target);
+    if(!seq.noPath){
+      const path=this._shotPath(seq.aRole,seq.from,seq.target);
       if(path.blocker) stages.push({kind:'block',id:path.blocker.entry.id,t:path.blocker.t});
       if(path.chainer?.canChain) stages.push({kind:'chain',id:path.chainer.entry.id,t:path.chainer.t});
       stages.sort((a,b)=>a.t-b.t);
-      if(stages[0]?.kind==='chain') stages.unshift({kind:'strike'});
     }
     stages.push({kind:'keeper'});
-    this.shotSeq={aRole,dRole,target,from,stages,idx:0,power:null,names:[],kickerId:eAtk.id,shooterId:eAtk.id};
-    this._nextShotStage(now);
+    return stages;
   }
   _nextShotStage(now){
     const seq=this.shotSeq, st=seq?.stages[seq.idx];
     if(!st){ this.confrontation=null; this.shotSeq=null; return; }
-    const locked=seq.power!=null; // the shooter has already picked
     const base={attackerRole:seq.aRole,defenderRole:seq.dRole,deadline:now+CONFRONT_MS,attackerChoice:null,defenderChoice:null,
       shotLine:{from:{...seq.from},to:{...seq.target}}};
-    if(st.kind==='strike'||st.kind==='chain'){
-      // Solo stages: only the shooting side has a choice to make.
-      this.confrontation={...base,type:st.kind,solo:true,attackerId:st.kind==='strike'?seq.shooterId:st.id,defenderId:null,defenderChoice:'none'};
+    // The shooter already committed in the strike, so they're locked from here.
+    if(st.kind==='chain'){
+      this.confrontation={...base,type:'chain',solo:true,attackerId:st.id,defenderId:null,defenderChoice:'none'};
     } else if(st.kind==='block'){
-      this.confrontation={...base,type:'block',attackerId:seq.kickerId,defenderId:st.id,attackerChoice:locked?'normal':null,attackerLocked:locked};
+      this.confrontation={...base,type:'block',attackerId:seq.kickerId,defenderId:st.id,attackerChoice:'normal',attackerLocked:true};
     } else {
       const reach=this._keeperReach(seq.dRole,seq.from,seq.target);
       if(reach<=0){ this._shotGoesIn(now,'into the empty net'); return; }
       const gkId=seq.dRole==='A'?this.gkIdA:this.gkIdB;
-      this.confrontation={...base,type:'shot',attackerId:seq.kickerId,defenderId:gkId,attackerChoice:locked?'normal':null,attackerLocked:locked,keeperReach:reach};
+      this.confrontation={...base,type:'shot',attackerId:seq.kickerId,defenderId:gkId,attackerChoice:'normal',attackerLocked:true,keeperReach:reach};
     }
   }
   /** One kick's contribution to a shot's power: technique (or a plain shot,
@@ -3465,11 +3464,15 @@ export default class GameScene extends Phaser.Scene {
     const st=this._statsFor(c.attackerRole,c.attackerId), e=this._entryById(c.attackerRole,c.attackerId);
     const tech=st?this._tryTech(st,'shot',c.attackerChoice):null;
     const name=st?.name||'';
-    let title;
+    let title, fxTech=tech;
     if(c.type==='strike'){
+      playKick();
       seq.power=this._kickPower(c.attackerRole,c.attackerId,tech);
       seq.names.push(tech?tech.name:'Normal');
-      title=tech?`${name} unleashes ${tech.name}!`:`${name} shoots!`;
+      // The keeper still has to pick blind, so the technique isn't named
+      // (or flashed) until the VS card.
+      title=`${name} shoots!`; fxTech=null;
+      seq.stages=this._buildShotStages(seq); seq.idx=-1;
     } else if(tech){
       seq.power+=this._kickPower(c.attackerRole,c.attackerId,tech);
       seq.names.push(tech.name);
@@ -3477,7 +3480,7 @@ export default class GameScene extends Phaser.Scene {
       if(e){ const p=this._posOf(e); seq.from={x:p.x,y:p.y}; }
       title=`${name} chains it with ${tech.name}!`;
     } else title=`${name} lets it run`;
-    const fx=tech&&e?{a:{x:this._posOf(e).x,y:this._posOf(e).y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:tech.name},d:null}:null;
+    const fx=fxTech&&e?{a:{x:this._posOf(e).x,y:this._posOf(e).y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:fxTech.name},d:null}:null;
     this.confrontResult={title,outcome:'',until:now+1200,outcomeAt:now+RESULT_DELAY_MS,fx};
     this.confrontation=null;
     seq.idx++;
@@ -3576,11 +3579,9 @@ export default class GameScene extends Phaser.Scene {
     const atk=c.type==='duel'?'dribble':'shot';
     const def=c.type==='shot'?'keeper':'defense'; // duel and block both face a 'defense' roll
     const seq=(c.type==='shot'||c.type==='block')?this.shotSeq:null;
-    // In a shot, the shooter picks (and pays) once, at the first stage that
-    // needs them; every later stage reuses the accumulated seq.power.
-    let aTech=null;
-    if(!seq||seq.power==null) aTech=this._tryTech(as,atk,c.attackerChoice);
-    if(seq&&seq.power==null){ seq.power=this._kickPower(c.attackerRole,c.attackerId,aTech); seq.names.push(aTech?aTech.name:'Normal'); }
+    // In a shot the shooter already picked (and paid) in the strike stage;
+    // block and keeper stages face the accumulated seq.power.
+    const aTech=seq?null:this._tryTech(as,atk,c.attackerChoice);
     const dTech=this._tryTech(ds,def,c.defenderChoice);
     // Elemental edge — only one side can hold it, and only when both players
     // have a known element (the roster doesn't have one for everyone).
@@ -3938,10 +3939,9 @@ export default class GameScene extends Phaser.Scene {
     if(!amHost&&this.matchStarted&&!this.clientTeamsBuilt) this._buildClientTeams();
     if(this.matchStarted) this._tickScroll(delta);
 
-    if(this.shotAim&&(!this._iHavePossession()||this.confrontation)) this.shotAim=null;
     const targets=this.matchStarted?this._computeTargets():[];
-    const myInput={targets,shootRequest:this.pendingShoot,passTarget:this.pendingPass,confrontationChoice:this.pendingChoice,subRequest:this.pendingSub,repositionRequest:this.pendingReposition,formationChange:this.pendingFormChange,teamPanelRequest:this.pendingTeamPanelRequest};
-    this.pendingShoot=false; this.pendingPass=null; this.pendingChoice=null; this.pendingSub=null; this.pendingReposition=null; this.pendingFormChange=null; this.pendingTeamPanelRequest=null;
+    const myInput={targets,shootRequest:this.pendingShoot,shotAim:this.pendingShotAim,passTarget:this.pendingPass,confrontationChoice:this.pendingChoice,subRequest:this.pendingSub,repositionRequest:this.pendingReposition,formationChange:this.pendingFormChange,teamPanelRequest:this.pendingTeamPanelRequest};
+    this.pendingShoot=false; this.pendingShotAim=null; this.pendingPass=null; this.pendingChoice=null; this.pendingSub=null; this.pendingReposition=null; this.pendingFormChange=null; this.pendingTeamPanelRequest=null;
     this.net.sendInput(myInput);
 
     if(amHost){ if(this.matchStarted) this._hostUpdate(time,delta,myInput); else if(time-this.lastStateSent>1000/STATE_HZ){this.lastStateSent=time;this.net.sendState({matchStarted:false});} }
@@ -4086,6 +4086,8 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _progressConfront(now,myInput,inputB,aiActive){
+    if(myInput.shotAim) this._setShotAim('A',myInput.shotAim);
+    if(!aiActive&&inputB.shotAim) this._setShotAim('B',inputB.shotAim);
     const c=this.confrontation;
     // Already showing the VS cards: no more input matters, just wait out the
     // beat and then apply what was rolled.
@@ -4285,7 +4287,7 @@ export default class GameScene extends Phaser.Scene {
     const stats=this._statsFor(relRole,relId); const rp=relId?getPlayerById(relId):null;
     document.getElementById('confrontation-title').textContent=isDuel?(amA?"Duel! You're being tackled":'Duel! Go for the tackle')
       :isBlock?(amA?'A defender is in the way!':'Block the shot — needs a supertechnique!')
-      :type==='strike'?'Shoot! A teammate on the line can chain it'
+      :type==='strike'?'Pick your spot on the goal, then your shot'
       :type==='chain'?'Chain the shot! Add a supertechnique to its power'
       :(amA?`Shoot for goal!${reachTxt}`:`Save the shot!${reachTxt}`);
     // A block only stops anything with a supertechnique (see

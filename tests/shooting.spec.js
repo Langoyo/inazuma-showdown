@@ -30,49 +30,96 @@ async function setup(page) {
   });
 }
 
-test.describe('aiming a shot', () => {
-  test('first tap in the goal area aims, the second shoots at that spot, and the aim stays inside the posts', async ({ page }) => {
+test.describe('shooting: tap, then pick the spot and the shot', () => {
+  test('one tap in the goal area shoots — play freezes on the strike, aimed at the tapped spot (inside the posts)', async ({ page }) => {
     await setup(page);
     const r = await page.evaluate(() => {
-      const s = window.__scene;
+      const s = window.__scene, { put, park, outfield } = window.__shot;
+      park();
+      const shooter = outfield(s.teamA)[0];
+      put(shooter, 480, 500);
       s._toWorld = (x, y) => ({ x, y });
-      s.currentPossession = s.role; s.confrontation = null;
-      s._pointerDown({ x: 580, y: 20 });          // in the goal area but wide of the post: clamped in
-      const aim = { ...s.shotAim }, firedEarly = s.pendingShoot;
-      s._pointerDown({ x: 450, y: 40 });          // anywhere in the goal area fires
-      return { aim, firedEarly, fired: s.pendingShoot, aimAfter: s.shotAim ?? null };
+      s.currentPossession = s.role; s.possRole = s.role; s.activeIdA = shooter.id; s.confrontation = null;
+      s._pointerDown({ x: 580, y: 20 }); // in the goal area but wide of the post: clamped in
+      const requested = s.pendingShoot;
+      s._startConfront('shot', 'A', 'B', s.time.now, { target: requested });
+      return { requested, type: s.confrontation.type, solo: s.confrontation.solo, target: s.shotSeq.target, line: s.confrontation.shotLine.to };
     });
-    expect(r.firedEarly).toBe(false);
-    expect(r.aim).toEqual({ x: 480 + 62, y: 0 });
-    expect(r.fired).toEqual({ x: 542, y: 0 });
-    expect(r.aimAfter).toBeNull();
+    expect(r.requested).toEqual({ x: 542, y: 0 });
+    expect(r.type).toBe('strike');
+    expect(r.solo).toBe(true);
+    expect(r.target).toEqual({ x: 542, y: 0 });
+    expect(r.line).toEqual({ x: 542, y: 0 });
   });
 
-  test('a tap away from the goal while aimed just drops the aim — no pass, no run', async ({ page }) => {
+  test('during the strike, goal taps move the aim, and the shot is built from wherever it ends up', async ({ page }) => {
     await setup(page);
     const r = await page.evaluate(() => {
-      const s = window.__scene;
+      const s = window.__scene, { put, park, outfield, keeper } = window.__shot;
+      park();
+      const shooter = outfield(s.teamA)[0], def = outfield(s.teamB)[0];
+      put(shooter, 420, 700); put(def, 360, 400); put(keeper('B'), 480, 40);
       s._toWorld = (x, y) => ({ x, y });
-      s.currentPossession = s.role; s.confrontation = null;
-      s._pointerDown({ x: 480, y: 30 });
-      s._pointerDown({ x: 480, y: 700 });
-      s._pointerUp();
-      return { aim: s.shotAim ?? null, shoot: s.pendingShoot, pass: s.pendingPass, drawing: !!s.drawing };
+      s.currentPossession = s.role; s.possRole = s.role; s.activeIdA = shooter.id; s.confrontation = null;
+      s._startConfront('shot', 'A', 'B', s.time.now, { target: { x: 420, y: 0 } });
+      const blockedAtFirst = !!s._shotPath('A', s.shotSeq.from, s.shotSeq.target).blocker; // 60px off this line
+      s._pointerDown({ x: 540, y: 30 });            // re-aim for the far post
+      const tapAim = s.pendingShotAim;
+      s._setShotAim('A', tapAim);                    // what the host does with it next frame
+      const line = s.confrontation.shotLine.to;
+      s.confrontation.attackerChoice = 'normal';
+      s._prepareConfrontReveal(s.time.now);
+      return { blockedAtFirst, tapAim, line, kinds: s.shotSeq ? s.shotSeq.stages.map((st) => st.kind) : null, next: s.confrontation?.type ?? null };
     });
-    expect(r).toEqual({ aim: null, shoot: false, pass: null, drawing: false });
+    expect(r.blockedAtFirst).toBe(true);
+    expect(r.tapAim).toEqual({ x: 540, y: 0 });
+    expect(r.line).toEqual({ x: 540, y: 0 });
+    expect(r.kinds).toEqual(['keeper']); // the new line clears the defender
+    expect(r.next).toBe('shot');
   });
 
-  test('once aimed, the line and keeper reach are drawn', async ({ page }) => {
+  test('left to run out, the strike is a normal shot at the current aim', async ({ page }) => {
     await setup(page);
     const r = await page.evaluate(() => {
-      const s = window.__scene;
-      s.currentPossession = s.role; s.possRole = s.role; s.confrontation = null;
-      s.shotAim = { x: 520, y: 0 };
+      const s = window.__scene, { put, park, outfield, keeper, giveShot } = window.__shot;
+      park();
+      const shooter = outfield(s.teamA)[0];
+      put(shooter, 480, 600); put(keeper('B'), 480, 40);
+      const st = giveShot('A', shooter, 'Strike Tech', 70);
+      s.possRole = 'A'; s.activeIdA = shooter.id; s.confrontation = null;
+      s._startConfront('shot', 'A', 'B', s.time.now, { target: { x: 480, y: 0 } });
+      const now = s.confrontation.deadline + 1;
+      s._progressConfront(now, { confrontationChoice: null }, { confrontationChoice: null }, false);
+      return { names: s.shotSeq.names, sp: st.sp, next: s.confrontation.type };
+    });
+    expect(r.names).toEqual(['Normal']);
+    expect(r.sp).toBe(999); // no PT spent
+    expect(r.next).toBe('shot');
+  });
+
+  test('the shot is drawn as a cone, with no keeper-chance text on the pitch', async ({ page }) => {
+    await setup(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene, { put, park, outfield } = window.__shot;
+      park();
+      const shooter = outfield(s.teamA)[0];
+      put(shooter, 480, 500);
+      s.possRole = 'A'; s.currentPossession = 'A'; s.activeIdA = shooter.id; s.confrontation = null;
+      s._startConfront('shot', 'A', 'B', s.time.now, { target: { x: 520, y: 0 } });
+      const calls = [];
+      const g = s.pathGfx, orig = g.fillTriangle.bind(g);
+      g.fillTriangle = (...a) => { calls.push(a); return orig(...a); };
       s._drawPaths();
-      return { visible: s.shotReachText.visible, text: s.shotReachText.text };
+      g.fillTriangle = orig;
+      return { calls, reachText: 'shotReachText' in s };
     });
-    expect(r.visible).toBe(true);
-    expect(r.text).toMatch(/^Keeper reach \d+%$/);
+    expect(r.calls).toHaveLength(1);
+    const [ax, ay, bx, by, cx, cy] = r.calls[0];
+    expect([ax, ay]).toEqual([480, 500]);           // apex on the shooter
+    expect(by).toBe(0); expect(cy).toBe(0);         // base on the goal line
+    expect((bx + cx) / 2).toBe(520);                // centred on the aim
+    expect(cx - bx).toBeGreaterThan(0);
+    expect(r.reachText).toBe(false);
   });
 });
 
@@ -117,6 +164,8 @@ test.describe('keeper position and reach', () => {
       s.possRole = 'A'; s.activeIdA = shooter.id; s.confrontation = null;
       const before = s.score.a;
       s._startConfront('shot', 'A', 'B', s.time.now, { target: { x: 470, y: 0 } });
+      s.confrontation.attackerChoice = 'normal';
+      s._prepareConfrontReveal(s.time.now);
       return { scored: s.score.a - before, confrontation: s.confrontation, seq: s.shotSeq };
     });
     expect(r.scored).toBe(1);
@@ -195,17 +244,18 @@ test.describe('chain shots', () => {
       put(shooter, 480, 800); put(m1, 480, 550); put(m2, 480, 300); put(keeper('B'), 480, 40);
       giveShot('A', shooter, 'Strike Tech', 70); giveShot('A', m1, 'One', 80); giveShot('A', m2, 'Two', 80);
       start();
-      const kinds = s.shotSeq.stages.map((st) => st.kind);
       s.confrontation.attackerChoice = 'normal'; s._prepareConfrontReveal(s.time.now);
+      const kinds = s.shotSeq.stages.map((st) => st.kind);
       const afterStrike = s.shotSeq.power;
       s.confrontation.attackerChoice = 'normal'; s._prepareConfrontReveal(s.time.now); // lets it run
       const afterRun = s.shotSeq.power;
       giveShot('A', m1, 'One', 80, 0); giveShot('A', m2, 'Two', 80, 0);
       start();
+      s.confrontation.attackerChoice = 'normal'; s._prepareConfrontReveal(s.time.now);
       const noPt = s.shotSeq.stages.map((st) => st.kind);
       return { kinds, afterStrike, afterRun, noPt };
     });
-    expect(r.kinds).toEqual(['strike', 'chain', 'keeper']);
+    expect(r.kinds).toEqual(['chain', 'keeper']);
     expect(r.afterRun).toBe(r.afterStrike);
     expect(r.noPt).toEqual(['keeper']);
   });
@@ -220,11 +270,11 @@ test.describe('chain shots', () => {
       giveShot('A', mate, 'Chain Tech', 80);
       s.possRole = 'A'; s.activeIdA = shooter.id; s.confrontation = null;
       s._startConfront('shot', 'A', 'B', s.time.now, { target: { x: 480, y: 0 } });
-      return { kinds: s.shotSeq.stages.map((st) => st.kind), first: s.confrontation.type };
+      s.confrontation.attackerChoice = 'normal'; s._prepareConfrontReveal(s.time.now);
+      return { kinds: s.shotSeq.stages.map((st) => st.kind), next: s.confrontation.type };
     });
-    // Blocker first, so the shooter picks blind against them as before.
     expect(r.kinds).toEqual(['block', 'chain', 'keeper']);
-    expect(r.first).toBe('block');
+    expect(r.next).toBe('block');
   });
 });
 
