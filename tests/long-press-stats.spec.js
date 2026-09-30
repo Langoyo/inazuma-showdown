@@ -8,7 +8,10 @@ import { waitForRosterLoaded, startMatch } from './helpers.js';
 // state at all.
 
 async function longPress(page, locator, ms = 650) {
-  await locator.scrollIntoViewIfNeeded();
+  // Centred rather than scrollIntoViewIfNeeded: a pin just inside the
+  // viewport's bottom edge counts as "visible" but sits under the fixed
+  // Confirm squad bar, so the press would land on that button instead.
+  await locator.evaluate((el) => el.scrollIntoView({ block: 'center' }));
   const box = await locator.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();

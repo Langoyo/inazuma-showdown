@@ -4,6 +4,203 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## A gentler AI on Normal
+The smarter AI turned out too sharp on Normal, so how hard the rival
+defends and attacks now scales with difficulty (new `AI_LEVELS` fields):
+
+| | Easy | Normal | Hard | Expert |
+|---|---|---|---|---|
+| Second presser engages within | 150px | 180px (was 230) | 230 | 260 |
+| Marks runners within | 150px | 180px (was 220) | 220 | 240 |
+| Marking tightness | 0.35 | 0.45 (was 0.6) | 0.6 | 0.7 |
+| Through-ball chance | 15% | 30% (was 50%) | 80% | 100% |
+| Extra pass range | 0 | 0 (was 40px) | 100 | 160 |
+| Best-aim chance on shots | 30% | 50% (was 65%) | 85% | 100% |
+
+Hard keeps exactly the previous behaviour, and Expert pushes a little
+further. This only applies to the AI rival: your own teammates, and both
+sides in multiplayer, keep the Hard defaults.
+
+## Remaining duplicate players cleaned up
+An audit of the roster found a few duplicates the earlier clean-up
+(which only removed exact copies) had missed. `scripts/dedupe-roster.mjs`
+(a dry run by default, `--write` to apply) fixes them:
+- **8 same-card duplicates merged, 9 entries removed (5127 → 5118).**
+  These were the same character in the same game, team and position with
+  the same stats, but not identical, so they survived before. Fei Rune had
+  3 Chrono Storm cards in GO2 with 0, 1 and 2 techniques. Cerise Blossom
+  and Keenan Sharpe each had a copy missing a technique, and Laraya Orbes'
+  two copies had different dribbles. Philip Star, Lucas Star, Alexander
+  Allegrov and Victorio Cryptix were straight copies. Each keeps its
+  lowest id and all of its techniques. The dropped ids are stored as
+  `aliases`: `getPlayerById` resolves them, and saved squads load them as
+  the kept player without placing them twice.
+- **12 cards no longer list a technique twice** (e.g. Mark Evans had God
+  Hand twice).
+- **Deliberately left alone:**
+  - The same character on different teams (Arion, Riccardo, Ark, Victor
+    Blade, Fei Rune on The Lagoon).
+  - Shawn Froste's DF and FW cards in IE2, his two real roles.
+  - Victor Blade's Chrono Storm and Earth Eleven stat lines match other
+    characters' exactly, which looks like a pairing slip in the earlier
+    stat import. The source dump would be needed to correct it.
+- **Stats are shared templates:** only about 30 distinct stat lines cover
+  the whole roster, so many different characters have identical stats.
+  That's how the source data (zukan.inazuma.jp) is, not something we
+  introduced.
+
+## Linked Browse Players filters
+The Game, Team and Position filters now narrow each other
+(`_refreshFilterOptions`): each dropdown only offers what the other two
+leave, with player counts. Pick a game and the team list shows only that
+game's teams, as plain options since the era is implied. Pick a team and
+the game list shows only its games. Positions with nobody left are
+greyed out. A selection that's still on offer is kept (an era option
+becomes the plain team once its game is picked); clearing a filter with
+its ✕ brings the full lists back.
+
+## Golden-goal overtime
+A match that's level when the second half runs out no longer ends in a
+draw. It goes to overtime (`_startOvertime`): a break with an "Overtime —
+next goal wins!" banner, the side that kicked off the match kicks off
+again, then play goes on with no time limit. The scoreboard clock counts
+up ("Overtime — 1:12 · golden goal"). The first goal ends the match after
+its celebration, and the full-time screen says "You win in overtime!" or
+"You lose in overtime". League tournament fixtures are the exception:
+there a draw is a real result worth a point each, so they still end
+level. Knockout fixtures now always get a winner on the pitch instead of
+a coin flip.
+
+## Aimed shots, keeper reach, chain shots and a shot preview
+- **Tap to shoot, then aim and pick.** With the ball, one tap in the goal
+  area shoots. Play freezes on a solo "strike" stage, aimed at the tapped
+  spot (clamped inside the posts). While it's frozen, tapping the goal
+  moves the aim (`_setShotAim`, sent as `shotAim` input so a multiplayer
+  guest aims too). Picking a supertechnique or "Normal shot" fires at the
+  current aim; if the timer runs out it's a normal shot. Penalties get the
+  same pause.
+- **Keeper reach.** Keepers now slide along their line after the ball to
+  cover the near post (`KEEPER_TRACK`). The keeper's save power is scaled
+  by how close they stand to the shot's line (`_keeperReach`: full within
+  20px, nothing beyond 150px). A keeper behind the kicker (dribbled past),
+  stunned or sent off can't save it at all: the shot goes into the empty
+  net with no keeper confrontation.
+- **Chain shots.** The first teammate standing on the shot's line (within
+  60px, same stretch of it as a blocker) can chain onto it with a shot
+  supertechnique of their own, adding its power to the shot. "Let it run"
+  adds nothing, and a teammate without the PT is skipped. The line and the
+  rest of the sequence (`_buildShotStages`) are worked out when the strike
+  fires, from the final aim. The ball then meets things in order: blocker
+  and/or chainer, then keeper. The shooter is locked in after the strike,
+  and the strike banner doesn't name their technique, so the keeper still
+  picks blind. Power carries through: a beaten blocker still trims it
+  (`BLOCK_PASS_PENALTY`), and the VS card shows the combined move, e.g.
+  "Fire Tornado + Dragon Tornado". Penalties skip blockers and chainers.
+- **Shot preview.** While you have the ball the goal mouth is lit as the
+  shooting area. From the strike pause on, the shot is drawn as a cone
+  from the kicker to the aimed spot. It's only drawn as a cone: blockers,
+  chainers and reach are judged along its centre line. The would-be
+  blocker is ringed red, a teammate who can chain is ringed gold (dimmed
+  without PT), and the keeper's ring goes green to red with their reach.
+  There's no on-pitch chance text; the save panel still shows the keeper's
+  reach %. It shows on both screens.
+- **AI aiming.** The AI picks the spot its opponent's keeper covers worst,
+  avoiding blockers and favouring a teammate who can chain. New
+  `aimSkill` per difficulty level sets how often it takes the best aim.
+
+## Smarter AI: pressing, marking, spacing, wings and passes that read you
+Off-ball movement (both teams, so your own teammates too):
+- **Pressing.** Besides the player chasing the ball, the one teammate
+  nearest the carrier (within `PRESS_ENGAGE_RANGE`) now commits to a
+  goal-side press. It replaces the old weak 35% drift of everyone within
+  190px (`_defensivePlan`).
+- **Marking runners.** Remaining defenders and midfielders pick up nearby
+  attackers, one marker each and runs from behind the ball first. They
+  stand goal-side of them and a little across toward the ball, while
+  keeping part of their formation spot.
+- **Spacing.** No off-ball target settles within `SPACING_MIN` (120px) of
+  a teammate (`_applySpacing`).
+- **Wings.** In possession, wide slots hold near their touchline
+  (`_holdWidth`), and supporters step up only part of the way to the
+  carrier's line, so the side no longer converges on one row.
+
+AI ball carrier (solo rival only):
+- **Dribbling.** It picks the most open of five lanes across the width
+  instead of always driving at the centre, so it goes down a wing when the
+  middle is shut. It cuts inside once in shooting range
+  (`_aiCarrierTarget`).
+- **Passing reads your players' positions** (`_aiPickPassTarget`):
+  - A pass is ruled out if any of your players can reach its rolling part
+    before the ball and the receiver do. The chipped first half sails over
+    everyone.
+  - A receiver with one of your players on them is not an option.
+  - Passes that take your players out of the game, or switch play to the
+    far wing, score higher.
+  - An onside runner near your back line can be found with a through ball
+    into the space behind it. Higher difficulty levels look further
+    (`vision`) and try through balls more often (`through`).
+- **Fewer passes.** A newly received ball is held for 0.9s, and unpressured
+  it only passes when the pass gets past someone or is a through ball.
+
+## Tournament match length, team names on the scoreboard, downloadable profile
+- **Back to the menu from the squad editor.** A "← Menu" button at the top
+  of the editor returns to the mode-select screen without losing the squad
+  you've built, so you can switch between solo, multiplayer and tournament.
+  If you had already confirmed a multiplayer squad, backing out withdraws it
+  (locally, and by sending the opponent a `{retracted:true}` squad, handled
+  in `_onRemoteSquad`) so a match can't start against someone who has left.
+- **Match length is picked once per tournament.** Every fixture ends in a
+  page reload, which reset the half length to the default, so it had to be
+  reselected before each match. The half length chosen in the squad editor
+  is now stored with the tournament (`halfLengthS`), reapplied before every
+  fixture, and shown in the bracket header.
+- **Team names on the scoreboard.** The goal counter now reads
+  `Raimon  2 - 1  Rival`. Your side uses the squad editor's team name, then
+  the profile's player name, then "You". The rival is "Rival" in solo, the
+  real team (and era) in a tournament, and the opponent's own team name in
+  multiplayer (squad payloads now carry a `name`). The `.score` text itself
+  is unchanged, so full-time scoring still reads it the same way.
+- **Profile file.** A collapsible 👤 Profile section sits below the
+  formation (pitch, bench and save row) in the squad editor, and folds away
+  with the Formation toggle. It holds your player name and a list of saved
+  squads. Save the current
+  squad (saving under an existing name updates it), rename, update from the
+  editor, load or delete. The whole profile can be downloaded as
+  `inazuma-profile.json`, edited by hand if you like, and imported back —
+  import merges by squad name and is validated (unknown formations fall back
+  to 4-4-2, sizes are capped, names are rendered as text, never HTML). Still
+  no backend: the working copy lives in `localStorage`, the file is the
+  backup/transfer format. It replaces the old one-slot 💾 Save / 📂 Load
+  buttons, which are gone; a squad saved with them is moved into the profile
+  the first time the game loads.
+
+## Browse-players filters, team names, a clearer font, and a few smaller fixes
+A batch of independent gameplay/UX requests, landed together:
+
+- **Team name.** The squad editor has a team-name field next to Save; it's
+  kept with the saved squad (still local, this browser only) and restored
+  by Load. The whole save row moved below the pitch and bench as a smaller,
+  secondary control rather than sitting above the formation. Accounts with profile-saved formations were built alongside this
+  and then dropped before merging — it stays a no-backend game for now.
+- **Dice squad stars.** The 🎲 random squad now always includes five standout
+  starters: one from the top 10 of their position, two more from the top 30,
+  and two from the top 40 (ranked within each position). Before, it was 2–3
+  picks from the top 20%, which with ~800 players per position rarely felt
+  like stars. The other 6 starters and the bench stay fully random.
+- **Browse Players filters.** Added a position filter (GK/DF/MF/FW,
+  independent of the existing "filling this pitch spot" scope-lock), a
+  small "✕" next to every filter to clear just that one, and wrapped the
+  whole filter row in its own collapsible section (default open) so it can
+  be tucked away without closing the player list itself.
+- **Font.** Swapped `Press Start 2P` (headers, scoreboard, confrontation UI)
+  for `Silkscreen` — still a genuine pixel font, but without the
+  1/I/l, O/0, S/5 ambiguity at the sizes this UI actually uses it at.
+- Removed the landing page's descriptive paragraph.
+- Added a goalkeeper-save sound (`playGkSave` in `src/audio/sfx.js`) — a
+  descending two-note parry, distinct from the existing kick/pass/goal/
+  whistle tones, triggered from the keeper-save branch of
+  `_applyConfrontOutcome`.
+
 ## Fix: multiplayer could still get stuck after both players confirmed
 Two more gaps in the same squad-confirm flow the earlier multiplayer fix
 touched:

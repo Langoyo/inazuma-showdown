@@ -62,6 +62,14 @@ export function playGoal() {
   tone(783.99, 0.22, { type: 'square', gain: 0.22, startAt: 0.2 });
 }
 
+/** A sharp descending two-note parry/catch for a goalkeeper save — distinct
+ *  from a kick (single low blip) or a block (not modeled yet) by dropping
+ *  pitch instead of staying flat or rising. */
+export function playGkSave() {
+  tone(660, 0.07, { type: 'triangle', gain: 0.2, startAt: 0 });
+  tone(330, 0.12, { type: 'triangle', gain: 0.16, startAt: 0.05 });
+}
+
 /** A flat double-note whistle for kickoff/full-time. */
 export function playWhistle() {
   tone(1046.5, 0.18, { type: 'sawtooth', gain: 0.12, startAt: 0 });

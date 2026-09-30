@@ -257,6 +257,53 @@ test.describe('tournament UI', () => {
     expect(teamAIds).toEqual(lockedStarters);
   });
 
+  test('the half length picked before the tournament sticks for every fixture, even across reloads', async ({ page }) => {
+    await openTournamentSetup(page, { size: '8' });
+    await page.selectOption('#half-length-select', '7');
+    await page.click('#pitch-randomize-btn');
+    await page.click('#confirm-squad-btn');
+
+    expect((await page.evaluate(() => window.__scene.activeTournament)).halfLengthS).toBe(420);
+    await expect(page.locator('#tournament-body')).toContainText('7 min halves');
+
+    await page.click('[data-tournament-action="play"]');
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
+    expect(await page.evaluate(() => window.__scene.halfLengthS)).toBe(420);
+
+    // Full time reloads the page, which resets the editor's select to its
+    // default — the next fixture must still use the tournament's own value.
+    await page.evaluate(() => { document.querySelector('#scoreboard .score').textContent = '5-0'; });
+    await page.evaluate(() => window.__scene._showFullTime());
+    await page.waitForTimeout(150);
+    await page.reload();
+    await page.waitForFunction(() => document.querySelectorAll('#squad-pick-list .pick-card').length > 0, { timeout: 15000 });
+    await page.click('#landing-play-btn');
+    expect(await page.evaluate(() => window.__scene.halfLengthS)).not.toBe(420);
+    await page.click('#mode-tournament-btn');
+    await page.click('[data-tournament-action="play"]');
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
+
+    const clock = await page.evaluate(() => ({ half: window.__scene.halfLengthS, left: window.__scene.matchClock.secondsRemaining }));
+    expect(clock.half).toBe(420);
+    expect(clock.left).toBeGreaterThan(400);
+  });
+
+  test('the scoreboard names both sides: your team and the tournament opponent', async ({ page }) => {
+    await openTournamentSetup(page, { size: '4' });
+    await page.fill('#squad-team-name', 'Raimon FC');
+    await page.click('#pitch-randomize-btn');
+    await page.click('#confirm-squad-btn');
+    const opponent = await page.evaluate(() => {
+      const s = window.__scene;
+      const m = s.activeTournament.rounds[0].find((x) => x.a === 'me' || x.b === 'me');
+      return s._entrantLabel(m.a === 'me' ? m.b : m.a);
+    });
+    await page.click('[data-tournament-action="play"]');
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
+    await expect(page.locator('#score-name-a')).toHaveText('Raimon FC');
+    await expect(page.locator('#score-name-b')).toHaveText(opponent);
+  });
+
   test('finishing your match records the result, advances the bracket, and survives a reload', async ({ page }) => {
     await openTournamentSetup(page, { size: '4' });
     await page.click('#pitch-randomize-btn');
