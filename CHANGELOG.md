@@ -9,7 +9,8 @@ A batch of independent gameplay/UX requests, landed together:
 
 - **Team name.** The squad editor has a team-name field next to Save; it's
   kept with the saved squad (still local, this browser only) and restored
-  by Load. Accounts with profile-saved formations were built alongside this
+  by Load. The whole save row moved below the pitch and bench as a smaller,
+  secondary control rather than sitting above the formation. Accounts with profile-saved formations were built alongside this
   and then dropped before merging — it stays a no-backend game for now.
 - **Dice squad stars.** The 🎲 random squad now always includes one starter
   from the top 10 of their position and two more from the top 30 (ranked

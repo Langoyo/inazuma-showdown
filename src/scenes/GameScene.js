@@ -1073,7 +1073,7 @@ export default class GameScene extends Phaser.Scene {
     const saved=this._readSavedSquad();
     const btn=document.getElementById('squad-load-btn');
     btn.disabled=!saved;
-    btn.textContent=saved?`📂 Load saved (${(saved.slots||[]).filter(Boolean).length}/11)`:'📂 Load saved';
+    btn.textContent=saved?`📂 Load (${(saved.slots||[]).filter(Boolean).length}/11)`:'📂 Load';
   }
   _flashSquadStatus(msg){
     const el=document.getElementById('squad-save-status');
