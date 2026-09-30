@@ -31,10 +31,12 @@ export function loadRoster() {
   return loadingPromise;
 }
 
-/** Only works after loadRoster() has resolved at least once. */
+/** Only works after loadRoster() has resolved at least once. Also resolves
+ * the ids of duplicate entries merged into another (their `aliases`, see
+ * scripts/dedupe-roster.mjs), so an old saved squad still finds its player. */
 export function getPlayerById(id) {
   if (!cache) return null;
-  return cache.find((p) => p.id === id) || null;
+  return cache.find((p) => p.id === id || p.aliases?.includes(id)) || null;
 }
 
 /** Distinct game tags present in the roster (IE1, IE2, IE3, GO1, GO2, GO3...),

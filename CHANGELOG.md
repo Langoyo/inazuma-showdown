@@ -4,6 +4,34 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Remaining duplicate players cleaned up
+An audit of the roster found a few duplicates the earlier clean-up
+(which only removed exact copies) had missed. `scripts/dedupe-roster.mjs`
+(a dry run by default, `--write` to apply) fixes them:
+- **8 same-card duplicates merged, 9 entries removed (5127 → 5118).**
+  These were the same character in the same game, team and position with
+  the same stats, but not identical, so they survived before. Fei Rune had
+  3 Chrono Storm cards in GO2 with 0, 1 and 2 techniques. Cerise Blossom
+  and Keenan Sharpe each had a copy missing a technique, and Laraya Orbes'
+  two copies had different dribbles. Philip Star, Lucas Star, Alexander
+  Allegrov and Victorio Cryptix were straight copies. Each keeps its
+  lowest id and all of its techniques. The dropped ids are stored as
+  `aliases`: `getPlayerById` resolves them, and saved squads load them as
+  the kept player without placing them twice.
+- **12 cards no longer list a technique twice** (e.g. Mark Evans had God
+  Hand twice).
+- **Deliberately left alone:**
+  - The same character on different teams (Arion, Riccardo, Ark, Victor
+    Blade, Fei Rune on The Lagoon).
+  - Shawn Froste's DF and FW cards in IE2, his two real roles.
+  - Victor Blade's Chrono Storm and Earth Eleven stat lines match other
+    characters' exactly, which looks like a pairing slip in the earlier
+    stat import. The source dump would be needed to correct it.
+- **Stats are shared templates:** only about 30 distinct stat lines cover
+  the whole roster, so many different characters have identical stats.
+  That's how the source data (zukan.inazuma.jp) is, not something we
+  introduced.
+
 ## Linked Browse Players filters
 The Game, Team and Position filters now narrow each other
 (`_refreshFilterOptions`): each dropdown only offers what the other two

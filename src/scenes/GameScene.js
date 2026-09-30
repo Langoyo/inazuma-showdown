@@ -1119,7 +1119,10 @@ export default class GameScene extends Phaser.Scene {
    *  who's since gone from the data is skipped rather than breaking the lot;
    *  returns how many starters were placed and how many had to be dropped. */
   _applySavedSquad(saved){
-    const known=id=>id&&getPlayerById(id)?id:null;
+    // Resolve to each player's current id (a merged duplicate's old id maps
+    // to the survivor), and don't let the same player fill two spots.
+    const used=new Set();
+    const known=id=>{ const p=id?getPlayerById(id):null; if(!p||used.has(p.id)) return null; used.add(p.id); return p.id; };
     const slots=(saved.slots||[]).slice(0,TEAM_SIZE).map(known);
     while(slots.length<TEAM_SIZE) slots.push(null);
     const bench=new Set((saved.bench||[]).map(known).filter(Boolean));
