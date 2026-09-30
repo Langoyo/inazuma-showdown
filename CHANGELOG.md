@@ -4,6 +4,39 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Aimed shots, keeper reach, chain shots and a shot preview
+- **Aim, then shoot.** With the ball, the first tap in the goal area sets
+  where the shot goes (clamped inside the posts). The second tap in the
+  goal area fires at that spot. A tap anywhere else while aimed just drops
+  the aim. `shootRequest` is now the aimed point `{x,y}`, so a multiplayer
+  guest aims too.
+- **Keeper reach.** Keepers now slide along their line after the ball to
+  cover the near post (`KEEPER_TRACK`). The keeper's save power is scaled
+  by how close they stand to the shot's line (`_keeperReach`: full within
+  20px, nothing beyond 150px). A keeper behind the kicker (dribbled past),
+  stunned or sent off can't save it at all: the shot goes into the empty
+  net with no keeper confrontation.
+- **Chain shots.** The first teammate standing on the shot's line (within
+  60px, same stretch of it as a blocker) can chain onto it with a shot
+  supertechnique of their own, adding its power to the shot. "Let it run"
+  adds nothing, and a teammate without the PT is skipped. A shot now runs
+  as a short sequence (`_startShot` / `shotSeq`) in the order the ball
+  meets things: blocker and/or chainer, then keeper. The shooter picks
+  once, in the first stage, and a solo "strike" pick comes first when a
+  chainer is the first thing on the line. Power carries through: a beaten
+  blocker still trims it (`BLOCK_PASS_PENALTY`), and the VS card shows the
+  combined move, e.g. "Fire Tornado + Dragon Tornado". Penalties skip
+  blockers and chainers.
+- **Shot preview.** While you have the ball the goal mouth is lit as the
+  shooting area. Once aimed, a dashed line runs from your carrier to the
+  aim, with the would-be blocker ringed red, a teammate who can chain
+  ringed gold (dimmed without PT), and the keeper ringed by reach, green
+  to red, with a "Keeper reach N%" label. The same line shows on both
+  screens while a shot is being played out.
+- **AI aiming.** The AI picks the spot its opponent's keeper covers worst,
+  avoiding blockers and favouring a teammate who can chain. New
+  `aimSkill` per difficulty level sets how often it takes the best aim.
+
 ## Smarter AI: pressing, marking, spacing, wings and passes that read you
 Off-ball movement (both teams, so your own teammates too):
 - **Pressing.** Besides the player chasing the ball, the one teammate

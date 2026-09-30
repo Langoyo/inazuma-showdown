@@ -46,9 +46,24 @@ const SHOT_FALLOFF_MIN  = 0.45;  // floor multiplier at max range
 // outright, same as a duel — or deliberately do nothing (e.g. save the PT
 // for later). Losing that roll doesn't kill the shot, just costs it more
 // power — it's already weakened by distance — before it reaches the keeper.
-const BLOCK_MIN_DIST     = 0;    // any shot can be walled, penalty box included
 const BLOCK_CORRIDOR_HALF= 70;   // how far off the direct shot line still counts as "in the way"
 const BLOCK_PASS_PENALTY = 0.8;  // extra power lost grazing past a beaten blocker
+// A teammate this close to the shot's line (same 12%-92% stretch of it as a
+// blocker) can chain onto it with a shot supertechnique of their own, adding
+// its power to the shot. Only the first one along the line gets the chance.
+const CHAIN_CORRIDOR_HALF = 60;
+const SHOT_PATH_T_MIN     = 0.12;
+const SHOT_PATH_T_MAX     = 0.92;
+// Aimed shots: the aim sits on the goal line, no closer than this to a post.
+const GOAL_AIM_INSET      = 8;
+// The keeper's save power scales with how close they are to the shot's line:
+// full within KEEPER_REACH_FULL, fading to nothing at KEEPER_REACH_MAX. A
+// keeper behind the kicker (dribbled past) can't get there at all.
+const KEEPER_REACH_FULL   = 20;
+const KEEPER_REACH_MAX    = 150;
+// Keepers slide along their line after the ball to cover the near post.
+const KEEPER_TRACK        = 0.35;
+const KEEPER_TRACK_MAX    = 42;   // px either side of the goal centre
 const RESULT_MS         = 3500;
 const RESULT_DELAY_MS   = 800;
 // Once both sides have chosen, the duel holds on a VS card for a beat before
@@ -284,11 +299,13 @@ const RATING_WEIGHTS = {
 // hard opponent is stronger in a duel without simply outrunning you.
 // `vision` extends the longest pass it will look for (px) and `through` is
 // the chance it considers a through ball behind your line on any one pass.
+// `aimSkill` is the chance it picks the best spot in the goal to shoot at
+// (see _aiPickShotAim) rather than a random one.
 const AI_LEVELS = {
-  easy:   { techChance:0.70, shootRange:420, shootChance:0.70, passChance:0.022, statMul:1.00, vision:0,   through:0.3 },
-  normal: { techChance:0.75, shootRange:445, shootChance:0.75, passChance:0.024, statMul:1.04, vision:40,  through:0.5 },
-  hard:   { techChance:0.90, shootRange:530, shootChance:0.90, passChance:0.034, statMul:1.18, vision:100, through:0.8 },
-  expert: { techChance:0.97, shootRange:620, shootChance:0.97, passChance:0.042, statMul:1.30, vision:160, through:1.0 }
+  easy:   { techChance:0.70, shootRange:420, shootChance:0.70, passChance:0.022, statMul:1.00, vision:0,   through:0.3, aimSkill:0.40 },
+  normal: { techChance:0.75, shootRange:445, shootChance:0.75, passChance:0.024, statMul:1.04, vision:40,  through:0.5, aimSkill:0.65 },
+  hard:   { techChance:0.90, shootRange:530, shootChance:0.90, passChance:0.034, statMul:1.18, vision:100, through:0.8, aimSkill:0.85 },
+  expert: { techChance:0.97, shootRange:620, shootChance:0.97, passChance:0.042, statMul:1.30, vision:160, through:1.0, aimSkill:1.00 }
 };
 const AI_LEVEL_DEFAULT = 'normal';
 const AI_SPEED_BONUS_SHARE = 0.5; // movement gets half the stat inflation
@@ -450,6 +467,8 @@ export default class GameScene extends Phaser.Scene {
 
     this._drawField();
     this.pathGfx=this.add.graphics();
+    this.shotReachText=this.add.text(0,0,'',{fontSize:'11px',fontStyle:'bold',color:'#ffffff',stroke:'#000',strokeThickness:4,resolution:3})
+      .setOrigin(0.5,1).setDepth(9).setVisible(false);
 
     this.matter.world.setBounds(0,0,this.FIELD_W,this.FIELD_H);
     this.ball=this.matter.add.circle(this.FIELD_W/2,this.FIELD_H/2,10,
@@ -2371,8 +2390,9 @@ export default class GameScene extends Phaser.Scene {
         yBias += slotRole==='FW'?-90:slotRole==='MF'?-50:-15;
       }
     }
-    // GK never moves from goal line
-    if(slot===0){ yBias=0; secondary=sSize/2; }   // keeper always central
+    // GK never leaves their line, but slides along it after the ball to
+    // cover the near post (which is what makes aiming a shot matter).
+    if(slot===0){ yBias=0; secondary=sSize/2+Phaser.Math.Clamp((ballPos.x-sSize/2)*KEEPER_TRACK,-KEEPER_TRACK_MAX,KEEPER_TRACK_MAX); }
 
     primary = Phaser.Math.Clamp(primary+yBias*attackDir, margin, pSize-margin);
     // Kickoff/restart: everyone stays on their own side of the halfway line
@@ -2816,7 +2836,17 @@ export default class GameScene extends Phaser.Scene {
   _pointerDown(pointer){
     if(!this.matchStarted||this.matchClock.ended) return;
     const w=this._toWorld(pointer.x,pointer.y);
-    if(this._iHavePossession()&&this._inGoalRegion(w)&&!this.confrontation){ this.pendingShoot=true; return; }
+    // Shooting is two taps in the goal area: the first aims (and shows the
+    // shot's line — see _drawShotPreview), the second fires at that aim. A
+    // tap anywhere else while aimed just drops the aim.
+    if(this._iHavePossession()&&!this.confrontation){
+      if(this._inGoalRegion(w)){
+        if(this.shotAim){ this.pendingShoot={...this.shotAim}; this.shotAim=null; }
+        else this.shotAim=this._clampAim(this.role,w.x);
+        return;
+      }
+      if(this.shotAim){ this.shotAim=null; return; }
+    }
     // Play is frozen during a confrontation, but drawing runs still works —
     // it's the natural moment to set up where everyone goes next. Only the
     // tap-to-pass in _pointerUp stays disabled until the duel resolves.
@@ -2949,6 +2979,42 @@ export default class GameScene extends Phaser.Scene {
         this.pathGfx.fillCircle(this.passMarker.x,this.passMarker.y,5);
       }
     }
+    this._drawShotPreview();
+  }
+
+  /** The shooting area and, once aimed (or while a shot is being played
+   *  out, from the synced shotLine), the shot's line: who'd block it (red),
+   *  who can chain it (gold, dimmed without the PT) and how well the keeper
+   *  covers it (their ring goes green → red as their reach grows). */
+  _drawShotPreview(){
+    const g=this.pathGfx, label=this.shotReachText;
+    label.setVisible(false);
+    const c=this.confrontation;
+    let from=null, to=null, aRole=null;
+    if(c?.shotLine){ from=c.shotLine.from; to=c.shotLine.to; aRole=c.attackerRole; }
+    else if(this._iHavePossession()&&!c){
+      const goalY=this.role==='A'?0:this.FIELD_H;
+      g.fillStyle(0xffe066,0.12);
+      g.fillRect(this.FIELD_W/2-GOAL_HALF_WIDTH,this.role==='A'?goalY:goalY-GOAL_CLICK_MARGIN,GOAL_HALF_WIDTH*2,GOAL_CLICK_MARGIN);
+      const e=this._activeEntry(this.role);
+      if(this.shotAim&&e){ const p=this._posOf(e); from={x:p.x,y:p.y}; to=this.shotAim; aRole=this.role; }
+    }
+    if(!from||!to) return;
+    const path=this._shotPath(aRole,from,to);
+    const reach=path.keeper?.reach??0;
+    const reachColor=reach>0.66?0xff4d4d:reach>0.33?0xffb84d:0x5dff7a;
+    // Dashed line from the kicker to the aim.
+    const len=Math.hypot(to.x-from.x,to.y-from.y)||1, ux=(to.x-from.x)/len, uy=(to.y-from.y)/len;
+    g.lineStyle(2,0xffffff,0.85);
+    for(let d=0;d<len;d+=18){
+      const e2=Math.min(d+10,len);
+      g.beginPath(); g.moveTo(from.x+ux*d,from.y+uy*d); g.lineTo(from.x+ux*e2,from.y+uy*e2); g.strokePath();
+    }
+    g.lineStyle(3,reachColor,1); g.strokeCircle(to.x,to.y,9);
+    if(path.blocker){ const p=this._posOf(path.blocker.entry); g.lineStyle(3,0xff4d4d,1); g.strokeCircle(p.x,p.y,19); }
+    if(path.chainer){ const p=this._posOf(path.chainer.entry); g.lineStyle(3,0xffd23f,path.chainer.canChain?1:0.35); g.strokeCircle(p.x,p.y,19); }
+    if(path.keeper){ const p=this._posOf(path.keeper.entry); g.lineStyle(3,reachColor,0.9); g.strokeCircle(p.x,p.y,19); }
+    label.setText(`Keeper reach ${Math.round(reach*100)}%`).setPosition(to.x,aRole==='A'?to.y+34:to.y-14).setColor(Phaser.Display.Color.IntegerToColor(reachColor).rgba).setVisible(true);
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -3282,40 +3348,163 @@ export default class GameScene extends Phaser.Scene {
   // ════════════════════════════════════════════════════════════════════
   // Confrontations
   // ════════════════════════════════════════════════════════════════════
-  /** `opts.skipBlockCheck` skips the wall-defender check (used when chaining
-   *  in from a beaten block, so the same shot can't be walled twice).
-   *  `opts.powerMulOverride` forces the shot's power multiplier instead of
-   *  recomputing it from distance (used for that same chained shot, which
-   *  already lost extra power grazing past the blocker). */
+  /** Shots run as a sequence (see _startShot); `opts.target` is where in the
+   *  goal it's aimed, `opts.noPath` skips blockers and chainers (penalties). */
   _startConfront(type,aRole,dRole,now,opts={}){
+    if(type==='shot'){ this._startShot(aRole,dRole,now,opts); return; }
     const aId=aRole==='A'?this.activeIdA:this.activeIdB;
-    if(type==='shot'){
-      playKick();
-      const eAtk=this._activeEntry(aRole);
-      const goalY=aRole==='A'?0:this.FIELD_H; // the goal aRole is shooting at
-      const shotDist=eAtk?Math.abs(goalY-eAtk.body.position.y):0;
-      const powerMul=opts.powerMulOverride!=null?opts.powerMulOverride:this._shotPowerMul(shotDist);
-      if(!opts.skipBlockCheck&&shotDist>=BLOCK_MIN_DIST){
-        const blocker=this._findBlocker(aRole,dRole,eAtk,goalY);
-        if(blocker){
-          this.confrontation={type:'block',attackerRole:aRole,defenderRole:dRole,attackerId:aId,defenderId:blocker.id,deadline:now+CONFRONT_MS,attackerChoice:null,defenderChoice:null,powerMul,chainShot:{aRole,dRole}};
-          return;
-        }
-      }
-      const dId=dRole==='A'?this.gkIdA:this.gkIdB;
-      // Chained in from a beaten block: the attacker already committed to —
-      // and already paid PT for — how hard they shot to power through the
-      // blocker. Carry that same resolved technique (or lack of one)
-      // straight into the keeper duel instead of asking them again for
-      // what's really the same shot, and don't charge them a second time
-      // for it (presetAttackerTech skips _tryTech in _prepareConfrontReveal
-      // entirely; attackerLocked hides their panel — see _updateConfrontUI).
-      const locked=opts.attackerLocked===true;
-      this.confrontation={type:'shot',attackerRole:aRole,defenderRole:dRole,attackerId:aId,defenderId:dId,deadline:now+CONFRONT_MS,attackerChoice:locked?'normal':null,defenderChoice:null,powerMul,attackerLocked:locked,presetAttackerTech:locked?(opts.attackerTechPreset??null):undefined};
-      return;
-    }
     const dId=dRole==='A'?this.activeIdA:this.activeIdB;
     this.confrontation={type,attackerRole:aRole,defenderRole:dRole,attackerId:aId,defenderId:dId,deadline:now+CONFRONT_MS,attackerChoice:null,defenderChoice:null};
+  }
+
+  _posOf(e){ return e.body?e.body.position:e.gfx; }
+  /** A point on the goal line `role` attacks, with x kept inside the mouth. */
+  _clampAim(role,x){
+    const lim=GOAL_HALF_WIDTH-GOAL_AIM_INSET, c=this.FIELD_W/2;
+    return {x:Phaser.Math.Clamp(x,c-lim,c+lim),y:role==='A'?0:this.FIELD_H};
+  }
+  /** What's on a shot's line from `from` to `target`, for the attacking side
+   *  `aRole`: the defender who'd block it (nearest the line), the first
+   *  teammate who could chain onto it, and how well the keeper reaches it.
+   *  Positions come from the body on the host and the drawn sprite on a
+   *  client, so the preview works on both. The kicker themselves sits at
+   *  the start of the line, outside the 12%-92% stretch, so never counts. */
+  _shotPath(aRole,from,target){
+    const dRole=aRole==='A'?'B':'A';
+    const dx=target.x-from.x, dy=target.y-from.y, lenSq=dx*dx+dy*dy||1;
+    const now=this.time.now;
+    const along=p=>{
+      const t=((p.x-from.x)*dx+(p.y-from.y)*dy)/lenSq;
+      return {t,d:Math.hypot(p.x-(from.x+dx*t),p.y-(from.y+dy*t))};
+    };
+    const onLine=(role,team,gkId,corridor)=>team
+      .filter(e=>e.id!==gkId&&(e.body||e.gfx)&&!this._isOut(role,e.id)&&!this._isStunned(e.id,now))
+      .map(e=>({entry:e,...along(this._posOf(e))}))
+      .filter(o=>o.t>SHOT_PATH_T_MIN&&o.t<SHOT_PATH_T_MAX&&o.d<corridor);
+    const blockers=onLine(dRole,dRole==='A'?this.teamA:this.teamB,dRole==='A'?this.gkIdA:this.gkIdB,BLOCK_CORRIDOR_HALF);
+    const chainers=onLine(aRole,aRole==='A'?this.teamA:this.teamB,aRole==='A'?this.gkIdA:this.gkIdB,CHAIN_CORRIDOR_HALF);
+    const blocker=blockers.sort((a,b)=>a.d-b.d)[0]||null;
+    const chainer=chainers.sort((a,b)=>a.t-b.t)[0]||null;
+    if(chainer){ const st=this._statsFor(aRole,chainer.entry.id); chainer.canChain=!!st&&canActivate(st,'shot'); }
+    const gk=this._entryById(dRole,dRole==='A'?this.gkIdA:this.gkIdB);
+    return {blocker,chainer,keeper:gk?{entry:gk,reach:this._keeperReach(dRole,from,target)}:null};
+  }
+  /** 0..1: how well `dRole`'s keeper covers a shot from `from` to `target`.
+   *  0 if they're behind the kicker (dribbled past), stunned or sent off. */
+  _keeperReach(dRole,from,target){
+    const gk=this._entryById(dRole,dRole==='A'?this.gkIdA:this.gkIdB);
+    if(!gk||this._isOut(dRole,gk.id)||this._isStunned(gk.id,this.time.now)) return 0;
+    const p=this._posOf(gk);
+    const dx=target.x-from.x, dy=target.y-from.y, lenSq=dx*dx+dy*dy||1;
+    const t=((p.x-from.x)*dx+(p.y-from.y)*dy)/lenSq;
+    if(t<=0) return 0;
+    const tc=Math.min(t,1);
+    const d=Math.hypot(p.x-(from.x+dx*tc),p.y-(from.y+dy*tc));
+    return Phaser.Math.Clamp(1-(d-KEEPER_REACH_FULL)/(KEEPER_REACH_MAX-KEEPER_REACH_FULL),0,1);
+  }
+
+  /** A shot is a short sequence of stages along its line, in the order the
+   *  ball meets them: a blocker and/or one chaining teammate, then the
+   *  keeper. The shot's power (this.shotSeq.power) is set by the shooter's
+   *  own pick and grows with each chain; a beaten blocker trims it. When a
+   *  chainer is met before anything else, the shooter picks first in a solo
+   *  'strike' stage; otherwise they pick blind against that first defender,
+   *  exactly as before. */
+  _startShot(aRole,dRole,now,opts={}){
+    playKick();
+    const eAtk=this._activeEntry(aRole); if(!eAtk?.body) return;
+    const target=opts.target?this._clampAim(aRole,opts.target.x):this._clampAim(aRole,this.FIELD_W/2);
+    const from={x:eAtk.body.position.x,y:eAtk.body.position.y};
+    const stages=[];
+    if(!opts.noPath){
+      const path=this._shotPath(aRole,from,target);
+      if(path.blocker) stages.push({kind:'block',id:path.blocker.entry.id,t:path.blocker.t});
+      if(path.chainer?.canChain) stages.push({kind:'chain',id:path.chainer.entry.id,t:path.chainer.t});
+      stages.sort((a,b)=>a.t-b.t);
+      if(stages[0]?.kind==='chain') stages.unshift({kind:'strike'});
+    }
+    stages.push({kind:'keeper'});
+    this.shotSeq={aRole,dRole,target,from,stages,idx:0,power:null,names:[],kickerId:eAtk.id,shooterId:eAtk.id};
+    this._nextShotStage(now);
+  }
+  _nextShotStage(now){
+    const seq=this.shotSeq, st=seq?.stages[seq.idx];
+    if(!st){ this.confrontation=null; this.shotSeq=null; return; }
+    const locked=seq.power!=null; // the shooter has already picked
+    const base={attackerRole:seq.aRole,defenderRole:seq.dRole,deadline:now+CONFRONT_MS,attackerChoice:null,defenderChoice:null,
+      shotLine:{from:{...seq.from},to:{...seq.target}}};
+    if(st.kind==='strike'||st.kind==='chain'){
+      // Solo stages: only the shooting side has a choice to make.
+      this.confrontation={...base,type:st.kind,solo:true,attackerId:st.kind==='strike'?seq.shooterId:st.id,defenderId:null,defenderChoice:'none'};
+    } else if(st.kind==='block'){
+      this.confrontation={...base,type:'block',attackerId:seq.kickerId,defenderId:st.id,attackerChoice:locked?'normal':null,attackerLocked:locked};
+    } else {
+      const reach=this._keeperReach(seq.dRole,seq.from,seq.target);
+      if(reach<=0){ this._shotGoesIn(now,'into the empty net'); return; }
+      const gkId=seq.dRole==='A'?this.gkIdA:this.gkIdB;
+      this.confrontation={...base,type:'shot',attackerId:seq.kickerId,defenderId:gkId,attackerChoice:locked?'normal':null,attackerLocked:locked,keeperReach:reach};
+    }
+  }
+  /** One kick's contribution to a shot's power: technique (or a plain shot,
+   *  for the shooter only), the kicker's shooting stat, how far out they are,
+   *  and the AI's difficulty bonus. */
+  _kickPower(role,id,tech){
+    const st=this._statsFor(role,id), e=this._entryById(role,id);
+    if(!st||!e) return 0;
+    const dist=Math.abs((role==='A'?0:this.FIELD_H)-this._posOf(e).y);
+    return (tech?tech.power:NORMAL_ACTION_POWER)*Math.pow(st[STAT_FIELD_FOR_TECH.shot],STAT_POWER_EXPONENT)*this._shotPowerMul(dist)*this._aiStatMul(role);
+  }
+  _shotMoveName(){
+    const used=(this.shotSeq?.names||[]).filter(n=>n!=='Normal');
+    return used.length?used.join(' + '):'Normal';
+  }
+  /** Resolves a solo strike/chain pick and moves the shot on. */
+  _resolveSoloStage(now){
+    const c=this.confrontation, seq=this.shotSeq;
+    if(!seq){ this.confrontation=null; return; }
+    const st=this._statsFor(c.attackerRole,c.attackerId), e=this._entryById(c.attackerRole,c.attackerId);
+    const tech=st?this._tryTech(st,'shot',c.attackerChoice):null;
+    const name=st?.name||'';
+    let title;
+    if(c.type==='strike'){
+      seq.power=this._kickPower(c.attackerRole,c.attackerId,tech);
+      seq.names.push(tech?tech.name:'Normal');
+      title=tech?`${name} unleashes ${tech.name}!`:`${name} shoots!`;
+    } else if(tech){
+      seq.power+=this._kickPower(c.attackerRole,c.attackerId,tech);
+      seq.names.push(tech.name);
+      seq.kickerId=c.attackerId;
+      if(e){ const p=this._posOf(e); seq.from={x:p.x,y:p.y}; }
+      title=`${name} chains it with ${tech.name}!`;
+    } else title=`${name} lets it run`;
+    const fx=tech&&e?{a:{x:this._posOf(e).x,y:this._posOf(e).y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:tech.name},d:null}:null;
+    this.confrontResult={title,outcome:'',until:now+1200,outcomeAt:now+RESULT_DELAY_MS,fx};
+    this.confrontation=null;
+    seq.idx++;
+    this._nextShotStage(now);
+  }
+  _shotGoesIn(now,how){
+    const seq=this.shotSeq;
+    const name=this._statsFor(seq.aRole,seq.kickerId)?.name||'';
+    this.confrontation=null; this.shotSeq=null;
+    this._onGoal(seq.aRole==='A'?'a':'b');
+    this.confrontResult={title:`⚽ GOAL! ${name} puts it ${how}! (${this.score.a} - ${this.score.b})`,outcome:'',until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS};
+  }
+  /** Where the AI aims: the spot in the goal mouth its keeper covers worst,
+   *  steering clear of a blocker and toward a teammate who can chain —
+   *  or, missing its aimSkill roll, anywhere in the goal. */
+  _aiPickShotAim(){
+    const e=this._activeEntry('B'); if(!e?.body) return null;
+    const from=e.body.position, lim=GOAL_HALF_WIDTH-GOAL_AIM_INSET, c=this.FIELD_W/2;
+    const xs=[...Array(7).keys()].map(i=>c-lim+(2*lim)*i/6);
+    if(Math.random()>=(this._aiParams().aimSkill??1)) return this._clampAim('B',Phaser.Utils.Array.GetRandom(xs));
+    let best=null, bestScore=-Infinity;
+    for(const x of xs){
+      const target=this._clampAim('B',x), path=this._shotPath('B',from,target);
+      const score=(1-(path.keeper?.reach??0))*100-(path.blocker?40:0)+(path.chainer?.canChain?25:0);
+      if(score>bestScore){ bestScore=score; best=target; }
+    }
+    return best;
   }
   /** Full power up close, easing down to a floor at long range. */
   _shotPowerMul(dist){
@@ -3323,30 +3512,6 @@ export default class GameScene extends Phaser.Scene {
     if(dist>=SHOT_FALLOFF_FAR) return SHOT_FALLOFF_MIN;
     const t=(dist-SHOT_FALLOFF_NEAR)/(SHOT_FALLOFF_FAR-SHOT_FALLOFF_NEAR);
     return 1-t*(1-SHOT_FALLOFF_MIN);
-  }
-  /** Finds the nearest defending outfield player (not the keeper) standing
-   *  close to the straight line between the shooter and the goal, between
-   *  the two (not behind either) — the one who'd actually get a foot to it. */
-  _findBlocker(aRole,dRole,eAtk,goalY){
-    if(!eAtk) return null;
-    const team=dRole==='A'?this.teamA:this.teamB;
-    const gkId=dRole==='A'?this.gkIdA:this.gkIdB;
-    const goalX=this.FIELD_W/2;
-    const sx=eAtk.body.position.x, sy=eAtk.body.position.y;
-    const dx=goalX-sx, dy=goalY-sy, lineLenSq=dx*dx+dy*dy||1;
-    const now=this.time.now;
-    let best=null, bestD=BLOCK_CORRIDOR_HALF;
-    for(const e of team){
-      if(e.id===gkId||!e.body) continue;
-      if(this._isOut(dRole,e.id)||this._isStunned(e.id,now)) continue;
-      const px=e.body.position.x-sx, py=e.body.position.y-sy;
-      const t=(px*dx+py*dy)/lineLenSq;
-      if(t<=0.12||t>=0.92) continue; // not meaningfully between shooter and goal
-      const projX=sx+dx*t, projY=sy+dy*t;
-      const d=Phaser.Math.Distance.Between(e.body.position.x,e.body.position.y,projX,projY);
-      if(d<bestD){ bestD=d; best=e; }
-    }
-    return best;
   }
   _aiParams(){ return AI_LEVELS[this.aiLevel]||AI_LEVELS[AI_LEVEL_DEFAULT]; }
   /** Difficulty stat inflation for `role`, applied live rather than baked
@@ -3392,7 +3557,8 @@ export default class GameScene extends Phaser.Scene {
     // _prepareConfrontReveal) — "normal" there just means the defender
     // deliberately does nothing, e.g. to save the PT for later.
     if(type==='block') return isAttacker?'Shoot anyway':'Let it through';
-    return isAttacker?'Normal shot':'Normal save'; // type==='shot'
+    if(type==='chain') return 'Let it run';
+    return isAttacker?'Normal shot':'Normal save'; // 'shot' and the solo 'strike'
   }
   _statsFor(role,id){ return (role==='A'?this.statsMapA:this.statsMapB).get(id); }
 
@@ -3404,30 +3570,32 @@ export default class GameScene extends Phaser.Scene {
    *  already frozen while a confrontation is live, so this reads as a pause. */
   _prepareConfrontReveal(now){
     const c=this.confrontation;
+    if(c.solo){ this._resolveSoloStage(now); return; }
     const as=this._statsFor(c.attackerRole,c.attackerId), ds=this._statsFor(c.defenderRole,c.defenderId);
-    if(!as||!ds){this.confrontation=null;return;}
+    if(!as||!ds){this.confrontation=null;this.shotSeq=null;return;}
     const atk=c.type==='duel'?'dribble':'shot';
     const def=c.type==='shot'?'keeper':'defense'; // duel and block both face a 'defense' roll
-    // A shot chained in from a beaten block already spent its attacker's PT
-    // (and locked in their technique) back when they powered through the
-    // blocker — reuse that resolved result instead of charging them again.
-    const aTech=c.presetAttackerTech!==undefined?c.presetAttackerTech:this._tryTech(as,atk,c.attackerChoice);
+    const seq=(c.type==='shot'||c.type==='block')?this.shotSeq:null;
+    // In a shot, the shooter picks (and pays) once, at the first stage that
+    // needs them; every later stage reuses the accumulated seq.power.
+    let aTech=null;
+    if(!seq||seq.power==null) aTech=this._tryTech(as,atk,c.attackerChoice);
+    if(seq&&seq.power==null){ seq.power=this._kickPower(c.attackerRole,c.attackerId,aTech); seq.names.push(aTech?aTech.name:'Normal'); }
     const dTech=this._tryTech(ds,def,c.defenderChoice);
-    // A shot's power fades with distance (see _shotPowerMul) — applies to
-    // both the block attempt and the eventual keeper duel, since it's the
-    // same weakened strike either way.
-    const powerMul=(c.type==='shot'||c.type==='block')?(c.powerMul||1):1;
     // Elemental edge — only one side can hold it, and only when both players
     // have a known element (the roster doesn't have one for everyone).
     const elEdge=this._elementEdge(as.element,ds.element);
-    const aP=(aTech?aTech.power:NORMAL_ACTION_POWER)*Math.pow(as[STAT_FIELD_FOR_TECH[atk]],STAT_POWER_EXPONENT)*powerMul*(elEdge>0?ELEMENT_EDGE:1)
-      *this._aiStatMul(c.attackerRole);
+    const aP=(seq
+      ? seq.power
+      : (aTech?aTech.power:NORMAL_ACTION_POWER)*Math.pow(as[STAT_FIELD_FOR_TECH[atk]],STAT_POWER_EXPONENT)*this._aiStatMul(c.attackerRole)
+    )*(elEdge>0?ELEMENT_EDGE:1);
+    // A keeper only saves what they can reach (see _keeperReach).
     const dP=(dTech?dTech.power:NORMAL_ACTION_POWER)*Math.pow(ds[STAT_FIELD_FOR_TECH[def]],STAT_POWER_EXPONENT)*(elEdge<0?ELEMENT_EDGE:1)
-      *this._aiStatMul(c.defenderRole);
+      *this._aiStatMul(c.defenderRole)*(c.type==='shot'?(c.keeperReach??1):1);
     // Blocking a shot takes a real supertechnique — a normal challenge can't
     // stop it, only soften what happens after (see BLOCK_PASS_PENALTY).
     const aWins=(c.type==='block'&&!dTech)?true:Math.random()<aP/(aP+dP);
-    const aTN=aTech?aTech.name:'Normal', dTN=dTech?dTech.name:'Normal';
+    const aTN=seq?this._shotMoveName():(aTech?aTech.name:'Normal'), dTN=dTech?dTech.name:'Normal';
     // Visual flourish data for whoever actually used a supertechnique —
     // rendered identically on host and client from the synced result.
     const eAtk=this._entryById(c.attackerRole,c.attackerId), eDef=this._entryById(c.defenderRole,c.defenderId);
@@ -3435,7 +3603,7 @@ export default class GameScene extends Phaser.Scene {
       a: aTech&&eAtk ? {x:eAtk.body.position.x,y:eAtk.body.position.y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:aTN} : null,
       d: dTech&&eDef ? {x:eDef.body.position.x,y:eDef.body.position.y,color:c.defenderRole==='A'?this.teamColorA:this.teamColorB,name:dTN} : null
     };
-    c.pending={aWins,aTN,dTN,fx,aName:as.name,dName:ds.name,aTech};
+    c.pending={aWins,aTN,dTN,fx,aName:as.name,dName:ds.name};
     c.reveal={
       until:now+DUEL_REVEAL_MS, litAt:now+DUEL_REVEAL_LIT_MS, type:c.type,
       // ids ride along so _renderDuelReveal can show each side's portrait —
@@ -3476,7 +3644,7 @@ export default class GameScene extends Phaser.Scene {
   _applyConfrontOutcome(now){
     const c=this.confrontation, r=c.pending;
     if(!r){ this.confrontation=null; return; }
-    const {aWins,aTN,dTN,fx,aName,dName,aTech}=r;
+    const {aWins,aTN,dTN,fx,aName,dName}=r;
     let title,outcome=`${aName}: ${aTN} · ${dName}: ${dTN}`;
     if(c.type==='duel'){
       const eA=this._activeEntry(c.attackerRole), eD=this._activeEntry(c.defenderRole);
@@ -3484,17 +3652,17 @@ export default class GameScene extends Phaser.Scene {
       else { this.possRole=c.defenderRole; this._setActive(c.defenderRole,c.defenderId); this._knockback(eA,eD); this.stunMap.set(c.attackerId,now+STUN_MS); title=`${dName} wins the ball!`; }
       this.duelLockUntil=now+STUN_MS+200;
     } else if(c.type==='block'){
-      if(aWins){
-        // Grazed past the wall — the shot is still on, just weaker for it.
-        // Chain straight into the real shot-vs-keeper duel rather than
-        // ending the confrontation here (skip the block check so the same
-        // shot can't be walled twice).
+      if(aWins&&this.shotSeq){
+        // Grazed past the wall — the shot is still on, just weaker for it,
+        // and carries on to whatever's next along its line.
         this.confrontation=null;
         this.confrontResult={title:`${aName} gets the shot away past ${dName}!`,outcome,until:now+1200,outcomeAt:now+RESULT_DELAY_MS,fx};
-        const {aRole,dRole}=c.chainShot;
-        this._startConfront('shot',aRole,dRole,now,{skipBlockCheck:true,powerMulOverride:(c.powerMul||1)*BLOCK_PASS_PENALTY,attackerLocked:true,attackerTechPreset:aTech??null});
+        this.shotSeq.power*=BLOCK_PASS_PENALTY;
+        this.shotSeq.idx++;
+        this._nextShotStage(now);
         return;
       }
+      this.shotSeq=null;
       // Blocked clean: the ball pops loose at the blocker's feet, turnover.
       // Look them up by the id the confrontation actually names — they
       // aren't necessarily who was "active" for the team before this.
@@ -3517,6 +3685,7 @@ export default class GameScene extends Phaser.Scene {
       title=`${dName} saves it!`;
       playGkSave();
     }
+    if(c.type==='shot') this.shotSeq=null;
     this.confrontation=null;
     this.confrontResult={title,outcome,until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS,fx};
   }
@@ -3623,7 +3792,7 @@ export default class GameScene extends Phaser.Scene {
     const cardTxt=cardType==='red'?' — RED CARD, sent off!':' (yellow card)';
     if(this._inPenaltyBox(offenderRole,spot)){
       this._placeBallAndAward(fouledRole,spot,now);
-      this._startConfront('shot',fouledRole,offenderRole,now,{skipBlockCheck:true}); // a penalty is never walled
+      this._startConfront('shot',fouledRole,offenderRole,now,{noPath:true}); // a penalty is never walled or chained
       this.confrontResult={title:`Penalty! Foul by ${offenderName}${cardTxt}`,outcome:'',until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS};
     } else {
       this._placeBallAndAward(fouledRole,spot,now);
@@ -3769,6 +3938,7 @@ export default class GameScene extends Phaser.Scene {
     if(!amHost&&this.matchStarted&&!this.clientTeamsBuilt) this._buildClientTeams();
     if(this.matchStarted) this._tickScroll(delta);
 
+    if(this.shotAim&&(!this._iHavePossession()||this.confrontation)) this.shotAim=null;
     const targets=this.matchStarted?this._computeTargets():[];
     const myInput={targets,shootRequest:this.pendingShoot,passTarget:this.pendingPass,confrontationChoice:this.pendingChoice,subRequest:this.pendingSub,repositionRequest:this.pendingReposition,formationChange:this.pendingFormChange,teamPanelRequest:this.pendingTeamPanelRequest};
     this.pendingShoot=false; this.pendingPass=null; this.pendingChoice=null; this.pendingSub=null; this.pendingReposition=null; this.pendingFormChange=null; this.pendingTeamPanelRequest=null;
@@ -3824,12 +3994,14 @@ export default class GameScene extends Phaser.Scene {
       this._moveTeam('A',myInput.targets,now); this._moveTeam('B',inputB.targets,now);
       if(myInput.passTarget&&this.possRole==='A') this._doPass('A',myInput.passTarget);
       else if(!aiActive&&inputB.passTarget&&this.possRole==='B') this._doPass('B',inputB.passTarget);
-      if(myInput.shootRequest&&this.possRole==='A') this._startConfront('shot','A','B',now);
-      else if(!aiActive&&inputB.shootRequest&&this.possRole==='B') this._startConfront('shot','B','A',now);
+      // shootRequest is the aimed spot ({x,y}); an older client sends `true`.
+      const aim=r=>(r&&typeof r==='object')?r:null;
+      if(myInput.shootRequest&&this.possRole==='A') this._startConfront('shot','A','B',now,{target:aim(myInput.shootRequest)});
+      else if(!aiActive&&inputB.shootRequest&&this.possRole==='B') this._startConfront('shot','B','A',now,{target:aim(inputB.shootRequest)});
       else if(aiActive&&this.possRole==='B'){
         const eB=this._activeEntry('B'), p=this._aiParams();
         // Shoot as soon as it's in range rather than dithering around the box
-        if(eB&&eB.body.position.y>this.FIELD_H-p.shootRange&&Math.random()<p.shootChance) this._startConfront('shot','B','A',now);
+        if(eB&&eB.body.position.y>this.FIELD_H-p.shootRange&&Math.random()<p.shootChance) this._startConfront('shot','B','A',now,{target:this._aiPickShotAim()});
         else if(eB&&this._aiMayPass(eB,now)){
           const underPressure=this._nearestOpponentDist('B',eB)<PRESS_RANGE;
           const passChance=underPressure?p.passChance:p.passChance*PASS_CHANCE_FREE_MULT;
@@ -3861,7 +4033,7 @@ export default class GameScene extends Phaser.Scene {
         a:this.teamA.filter(e=>this._isOut('A',e.id)).map(e=>e.id),
         b:this.teamB.filter(e=>this._isOut('B',e.id)).map(e=>e.id)
       };
-      this.net.sendState({matchStarted:true,ball:{x:this.ball.position.x,y:this.ball.position.y},ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>({x:e.body.position.x,y:e.body.position.y})),teamB:this.teamB.map(e=>({x:e.body.position.x,y:e.body.position.y})),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,powerMul:this.confrontation.powerMul||1,attackerLocked:!!this.confrontation.attackerLocked}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)},clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended},stuns:stunAry,teamPanelOpen:this.teamPanelOpen});
+      this.net.sendState({matchStarted:true,ball:{x:this.ball.position.x,y:this.ball.position.y},ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>({x:e.body.position.x,y:e.body.position.y})),teamB:this.teamB.map(e=>({x:e.body.position.x,y:e.body.position.y})),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,attackerLocked:!!this.confrontation.attackerLocked,solo:!!this.confrontation.solo,keeperReach:this.confrontation.keeperReach??null,shotLine:this.confrontation.shotLine||null}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)},clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended},stuns:stunAry,teamPanelOpen:this.teamPanelOpen});
     }
   }
 
@@ -4089,11 +4261,15 @@ export default class GameScene extends Phaser.Scene {
     const amA=confrontation.attackerRole===this.role, amD=confrontation.defenderRole===this.role;
     if(!amA&&!amD){panel.style.display='none';return;}
     panel.style.display='flex';
-    // Chained in from a beaten block: the attacker already made this call
-    // (see _startConfront) — show them it's out of their hands now instead
-    // of asking again for what's really the same shot.
-    if(amA&&confrontation.attackerLocked){
-      document.getElementById('confrontation-title').textContent="You're through — waiting for the keeper!";
+    const reachTxt=confrontation.type==='shot'&&confrontation.keeperReach!=null?` · keeper reach ${Math.round(confrontation.keeperReach*100)}%`:'';
+    // Later stages of a shot the shooter already picked for (see _startShot),
+    // or the defending side while the shooting side lines up a strike or a
+    // chain: nothing to choose, just show what's happening.
+    const waiting=(amA&&confrontation.attackerLocked)?(confrontation.type==='block'?'A defender is in the way — waiting on them!':`You're through — waiting for the keeper!${reachTxt}`)
+      :(amD&&confrontation.solo)?(confrontation.type==='chain'?'A teammate is chaining the shot…':'Opponent is lining up the shot…')
+      :null;
+    if(waiting){
+      document.getElementById('confrontation-title').textContent=waiting;
       document.getElementById('conf-normal').style.display='none';
       document.getElementById('conf-tech-list').innerHTML='';
       document.getElementById('confrontation-player-info').innerHTML='';
@@ -4101,14 +4277,17 @@ export default class GameScene extends Phaser.Scene {
       document.getElementById('confrontation-timer-fill').style.width=`${(rem/CONFRONT_MS)*100}%`;
       return;
     }
-    const isDuel=confrontation.type==='duel', isBlock=confrontation.type==='block';
+    const type=confrontation.type;
+    const isDuel=type==='duel', isBlock=type==='block';
     const techId=isDuel?(amA?'dribble':'defense'):isBlock?(amA?'shot':'defense'):(amA?'shot':'keeper');
     const relId=amA?confrontation.attackerId:confrontation.defenderId;
     const relRole=amA?confrontation.attackerRole:confrontation.defenderRole;
     const stats=this._statsFor(relRole,relId); const rp=relId?getPlayerById(relId):null;
     document.getElementById('confrontation-title').textContent=isDuel?(amA?"Duel! You're being tackled":'Duel! Go for the tackle')
       :isBlock?(amA?'A defender is in the way!':'Block the shot — needs a supertechnique!')
-      :(amA?'Shoot for goal!':'Save the shot!');
+      :type==='strike'?'Shoot! A teammate on the line can chain it'
+      :type==='chain'?'Chain the shot! Add a supertechnique to its power'
+      :(amA?`Shoot for goal!${reachTxt}`:`Save the shot!${reachTxt}`);
     // A block only stops anything with a supertechnique (see
     // _prepareConfrontReveal) — "normal" there just means the defender
     // deliberately does nothing, e.g. to save the PT for later.
