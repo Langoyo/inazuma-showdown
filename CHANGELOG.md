@@ -4,36 +4,13 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
-## Accounts, profile-saved formations, browse-players filters, and a few smaller fixes
+## Browse-players filters, team names, a clearer font, and a few smaller fixes
 A batch of independent gameplay/UX requests, landed together:
 
-- **Accounts.** Every player now has *some* signed-in Firebase Auth user
-  from the moment the app loads — anonymous by default (`src/auth/auth.js`),
-  upgradeable in place to a real account via email/password sign-up or
-  Google sign-in, both of which *link* onto the existing anonymous uid
-  (`linkWithCredential`/`linkWithPopup`) rather than starting a separate
-  account, so anything already saved while anonymous carries over. "Play
-  anonymously" is simply never upgrading that session. New `👤 Profile`
-  panel (reachable from the landing page) holds the sign-in/sign-up form
-  and account status.
-- **Profile-saved formations.** The squad editor's team-name field (next to
-  Save) is saved along with the formation itself to a new Firestore-backed
-  list under the signed-in user (`src/auth/profile.js`) — the Save button
-  now writes both the existing local (this-browser-only) copy *and* a named
-  entry in your profile, and the Profile panel lists every saved formation
-  with its own Load/Delete.
-  - **Note:** `src/firebase-app.js` reuses the Firebase project already set
-    up for multiplayer signaling, but Auth and Firestore need their own
-    setup in that project's console before this actually persists anything
-    — enabling the Email/Password, Google, and Anonymous sign-in providers
-    under Authentication, enabling Firestore itself (a different product
-    from the Realtime Database used for signaling), and setting its
-    security rules to `users/{uid}/formations/{doc}` scoped to that uid.
-    The real `apiKey`/`appId`/`messagingSenderId` from that project's Web
-    app config also need dropping into `FIREBASE_CONFIG` there (currently
-    placeholders) — until then, sign-in attempts fail gracefully (caught,
-    shown as a status message) rather than breaking anything else in the
-    app.
+- **Team name.** The squad editor has a team-name field next to Save; it's
+  kept with the saved squad (still local, this browser only) and restored
+  by Load. Accounts with profile-saved formations were built alongside this
+  and then dropped before merging — it stays a no-backend game for now.
 - **Browse Players filters.** Added a position filter (GK/DF/MF/FW,
   independent of the existing "filling this pitch spot" scope-lock), a
   small "✕" next to every filter to clear just that one, and wrapped the

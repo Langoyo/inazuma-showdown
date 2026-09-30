@@ -572,35 +572,10 @@
   <!-- ===================== LANDING ===================== -->
   <div id="landing-panel" class="panel-overlay" style="display:flex;justify-content:center;text-align:center;">
     <button id="sfx-toggle-btn" class="nes-btn is-compact" style="position:absolute;top:10px;right:10px;" title="Toggle sound effects">🔊</button>
-    <button id="profile-open-btn" class="nes-btn is-compact" style="position:absolute;top:10px;left:10px;" title="Account &amp; saved formations">👤</button>
     <!-- Text placeholder for now — swap for an <img> once there's a real logo. -->
     <div id="landing-logo">🏆</div>
     <h1 id="landing-title" style="font-size:22px;line-height:1.5;margin-bottom:26px;">Inazuma Showdown</h1>
     <button id="landing-play-btn" class="nes-btn is-primary" style="font-size:16px;padding:12px 34px;">▶ Play</button>
-  </div>
-
-  <!-- ===================== PROFILE (account + saved formations) ===================== -->
-  <div id="profile-panel" class="panel-overlay" style="justify-content:flex-start;text-align:center;overflow-y:auto;padding-top:20px;">
-    <button id="profile-close-btn" class="nes-btn is-compact" style="position:absolute;top:10px;right:10px;" title="Close">✕</button>
-    <h2 style="font-size:16px;margin:10px 0 6px;">👤 Profile</h2>
-    <div id="profile-status" style="font-size:12px;min-height:16px;margin-bottom:8px;color:var(--gold);"></div>
-
-    <div id="profile-signedin-view" style="display:none;width:100%;max-width:380px;margin-bottom:18px;">
-      <p id="profile-user-label" style="font-size:13px;"></p>
-      <button id="profile-signout-btn" class="nes-btn is-compact">Sign out</button>
-    </div>
-    <div id="profile-guest-view" style="width:100%;max-width:320px;margin-bottom:18px;">
-      <p style="font-size:11px;opacity:.8;">Playing as a guest — sign up to keep your formations if you switch devices.</p>
-      <input id="profile-email" type="email" placeholder="Email" class="nes-input is-compact" style="width:100%;margin-bottom:6px;" />
-      <input id="profile-password" type="password" placeholder="Password" class="nes-input is-compact" style="width:100%;margin-bottom:6px;" />
-      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
-        <button id="profile-signup-btn" class="nes-btn is-primary is-compact">Sign up</button>
-        <button id="profile-signin-btn" class="nes-btn is-compact">Sign in</button>
-      </div>
-    </div>
-
-    <h3 style="font-size:13px;margin-bottom:6px;">Saved formations</h3>
-    <div id="profile-formations-list" style="width:100%;max-width:420px;display:flex;flex-direction:column;gap:6px;"></div>
   </div>
 
   <!-- ===================== MODE SELECT ===================== -->
@@ -680,9 +655,8 @@
         <span id="squad-fill-count" style="font-size:11px;opacity:0.75;">0/11 filled</span>
       </div>
 
-      <!-- Save keeps a local (this-browser-only) copy, and — once signed
-           in, even anonymously — a named copy in your profile too (see
-           #profile-panel), which is what the team name below is for. -->
+      <!-- Keep the squad you built between sessions (this browser only),
+           along with its team name. -->
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
         <input id="squad-team-name" type="text" class="nes-input is-compact" placeholder="Team name (optional)" style="flex:1;min-width:140px;" />
         <button id="squad-save-btn" class="nes-btn is-primary is-compact">💾 Save squad</button>
