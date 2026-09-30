@@ -4,6 +4,40 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Smarter AI: pressing, marking, spacing, wings and passes that read you
+Off-ball movement (both teams, so your own teammates too):
+- **Pressing.** Besides the player chasing the ball, the one teammate
+  nearest the carrier (within `PRESS_ENGAGE_RANGE`) now commits to a
+  goal-side press. It replaces the old weak 35% drift of everyone within
+  190px (`_defensivePlan`).
+- **Marking runners.** Remaining defenders and midfielders pick up nearby
+  attackers, one marker each and runs from behind the ball first. They
+  stand goal-side of them and a little across toward the ball, while
+  keeping part of their formation spot.
+- **Spacing.** No off-ball target settles within `SPACING_MIN` (120px) of
+  a teammate (`_applySpacing`).
+- **Wings.** In possession, wide slots hold near their touchline
+  (`_holdWidth`), and supporters step up only part of the way to the
+  carrier's line, so the side no longer converges on one row.
+
+AI ball carrier (solo rival only):
+- **Dribbling.** It picks the most open of five lanes across the width
+  instead of always driving at the centre, so it goes down a wing when the
+  middle is shut. It cuts inside once in shooting range
+  (`_aiCarrierTarget`).
+- **Passing reads your players' positions** (`_aiPickPassTarget`):
+  - A pass is ruled out if any of your players can reach its rolling part
+    before the ball and the receiver do. The chipped first half sails over
+    everyone.
+  - A receiver with one of your players on them is not an option.
+  - Passes that take your players out of the game, or switch play to the
+    far wing, score higher.
+  - An onside runner near your back line can be found with a through ball
+    into the space behind it. Higher difficulty levels look further
+    (`vision`) and try through balls more often (`through`).
+- **Fewer passes.** A newly received ball is held for 0.9s, and unpressured
+  it only passes when the pass gets past someone or is a through ball.
+
 ## Tournament match length, team names on the scoreboard, downloadable profile
 - **Back to the menu from the squad editor.** A "← Menu" button at the top
   of the editor returns to the mode-select screen without losing the squad

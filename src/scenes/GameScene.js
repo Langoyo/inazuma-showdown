@@ -125,17 +125,10 @@ const AUTO_MAX_SPEED        = 0.704;
 const SPRINT_MAX_SPEED_BONUS = 0.18; // +18% top speed at full stamina, tapering to +0%
 const SPRINT_MAX_FORCE_BONUS = 0.15;
 
-// Off-ball behaviour: how strongly teammates push forward to support the
-// ball carrier, and how close a defender presses the opponent on the ball.
+// Off-ball behaviour: how strongly teammates shift sideways to support the
+// ball carrier. PRESS_RANGE is how close an opponent has to be for a ball
+// carrier to count as under pressure.
 const SUPPORT_BLEND  = 0.65;
-// Was 0.5/260 — on a 960-wide pitch that let well over half the width
-// press at once, and each pulled hard enough toward the ball to swamp
-// their own formation spot, so the whole side (wingers included) visibly
-// collapsed into a knot around the ball instead of holding their lanes.
-// Fewer players engage now, and the ones who do keep more of their own
-// spot's pull, so it reads as a press from whoever's actually close
-// rather than the entire team caving inward.
-const PRESS_BLEND    = 0.35;
 const PRESS_RANGE    = 190;
 
 // How much the AI ball carrier's per-tick pass chance (AI_LEVELS.passChance)
@@ -146,6 +139,51 @@ const PRESS_RANGE    = 190;
 // pass-happy; cut way down with nobody near, back to the tuned rate once
 // someone's actually closing in.
 const PASS_CHANCE_FREE_MULT = 0.25;
+
+// Defending off the ball. Besides the active player (who chases the ball),
+// the one teammate nearest the carrier commits to a goal-side press if
+// they're within PRESS_ENGAGE_RANGE; DF/MF teammates then pick up the other
+// attackers near their own formation spot, most dangerous (nearer our goal
+// than the ball) first, one marker each.
+const PRESS_ENGAGE_RANGE = 230;
+const PRESS_GOAL_SIDE    = 35;   // presser stands this far goal-side of the carrier
+const MARK_RANGE         = 220;  // runner must be this close to the marker's formation spot
+const MARK_DANGER_BONUS  = 80;   // runners behind the ball are picked up first
+const MARK_GOAL_SIDE     = 40;   // mark from this far goal-side of the runner...
+const MARK_BALL_SHIFT    = 0.2;  // ...and this share of the way across toward the ball, in the lane
+const MARK_BLEND         = 0.6;  // share of the mark spot vs. the formation spot
+
+// Attacking off the ball: wide slots hold near their touchline, and nobody
+// settles within SPACING_MIN of a teammate.
+const WING_SLOT_X        = 0.3;  // formation x below this (or above 1-this) is a wide slot
+const WING_TOUCHLINE_GAP = 0.09; // fraction of width a wide attacker keeps from the line
+const WING_BLEND         = 0.6;
+const SUPPORT_Y_BLEND    = 0.35; // how far supporters step up toward the carrier's line
+const SPACING_MIN        = 120;
+const SPACING_PUSH       = 0.6;  // share of the overlap a target is pushed away by
+
+// AI ball carrier (solo rival only).
+const AI_PASS_COOLDOWN_MS = 900; // hold a newly won/received ball at least this long
+const AI_LANES            = [0.12,0.30,0.50,0.70,0.88]; // dribble lanes, fraction of width
+const AI_LANE_AHEAD       = 160; // how far ahead a lane's openness is measured
+const AI_LANE_OPEN_CAP    = 260; // openness beyond this counts the same
+const AI_LANE_SHIFT_COST  = 0.35; // score lost per px of sideways travel
+const AI_LANE_STICKY      = 25;  // bonus for the lane already chosen, so it doesn't flicker
+const AI_CUT_IN_EXTRA     = 120; // head for the middle once within shootRange + this
+// Pass reading: the ball is chipped over the first PASS_LOFT_FRAC of a pass,
+// then rolls ~5x faster than a player runs, so a defender cuts it out only by
+// reaching a point on the rolling part before the ball (and the receiver) do.
+const INTERCEPT_REACH       = 26;
+const INTERCEPT_SPEED_RATIO = 0.22;
+const RECEIVER_MARKED_DIST  = 55;  // someone this close to a receiver rules them out
+const PASS_MAX_DIST         = 560;
+const PASS_BYPASS_BONUS     = 60;  // per defender the pass takes out of the game
+const BYPASS_CORRIDOR       = 200; // an opponent is "in the way" if ahead and within this sideways
+const PASS_SWITCH_BONUS     = 80;  // max bonus for switching to the far wing
+const THROUGH_BALL_LEAD     = 80;  // through balls are played this far ahead of the runner
+const THROUGH_BALL_SPACE    = 90;  // and need this much open grass around that point
+const THROUGH_BALL_NEAR_LINE= 140; // runner must be onside, within this of the offside line
+const THROUGH_BALL_BONUS    = 80;
 
 // The formation spans the whole pitch, not just the defending half: the
 // deepest slot sits on its own goal line and the most advanced one pushes
@@ -244,11 +282,13 @@ const RATING_WEIGHTS = {
 // run out of room once it's already taking every chance it gets.
 // `statMul` scales its combat stats; movement gets half of that bonus, so a
 // hard opponent is stronger in a duel without simply outrunning you.
+// `vision` extends the longest pass it will look for (px) and `through` is
+// the chance it considers a through ball behind your line on any one pass.
 const AI_LEVELS = {
-  easy:   { techChance:0.70, shootRange:420, shootChance:0.70, passChance:0.022, statMul:1.00 },
-  normal: { techChance:0.75, shootRange:445, shootChance:0.75, passChance:0.024, statMul:1.04 },
-  hard:   { techChance:0.90, shootRange:530, shootChance:0.90, passChance:0.034, statMul:1.18 },
-  expert: { techChance:0.97, shootRange:620, shootChance:0.97, passChance:0.042, statMul:1.30 }
+  easy:   { techChance:0.70, shootRange:420, shootChance:0.70, passChance:0.022, statMul:1.00, vision:0,   through:0.3 },
+  normal: { techChance:0.75, shootRange:445, shootChance:0.75, passChance:0.024, statMul:1.04, vision:40,  through:0.5 },
+  hard:   { techChance:0.90, shootRange:530, shootChance:0.90, passChance:0.034, statMul:1.18, vision:100, through:0.8 },
+  expert: { techChance:0.97, shootRange:620, shootChance:0.97, passChance:0.042, statMul:1.30, vision:160, through:1.0 }
 };
 const AI_LEVEL_DEFAULT = 'normal';
 const AI_SPEED_BONUS_SHARE = 0.5; // movement gets half the stat inflation
@@ -2349,15 +2389,17 @@ export default class GameScene extends Phaser.Scene {
   }
 
   /** Where an off-ball player (not the one being explicitly steered) should
-   *  drift to. Keeps the formation shape as a base, but blends in a forward
-   *  supporting run (to offer a passing option) when this team has the
-   *  ball, or a press toward the ball carrier when the opponent does —
-   *  applies to both the human team's teammates and the AI team's players. */
-  _offBallTarget(role,e,activeId,iHaveBall,ballCarrier){
+   *  drift to. Keeps the formation shape as a base; with the ball it blends
+   *  in a supporting run and holds the wings wide, without it it follows the
+   *  side's defensive plan (one presser, markers on runners — see
+   *  _defensivePlan). Either way it then keeps clear of teammates. Applies
+   *  to both the human team's teammates and the AI team's players.
+   *  `defPlan` is normally computed once per side per frame by _moveTeam. */
+  _offBallTarget(role,e,activeId,iHaveBall,ballCarrier,defPlan=null){
     const base=this._formPos(role,e.slot,this.ball.position);
     if(e.slot===0||e.id===activeId) return base; // keeper & the on-ball player keep plain formation logic
 
-    let target=base;
+    let target=base, pressing=false;
     if(iHaveBall){
       const carrier=this._activeEntry(role);
       if(carrier){
@@ -2370,37 +2412,108 @@ export default class GameScene extends Phaser.Scene {
         // the carrier's lane keeps their natural spacing intact.
         const attackDir=role==='A'?-1:1;
         const side=(base.x>=carrier.body.position.x)?1:-1;
-        const supportSpot={
-          x:base.x+side*70,
-          y:Phaser.Math.Linear(base.y,carrier.body.position.y+attackDir*130,0.5)
-        };
+        // Stepping only part of the way up to the carrier's line keeps each
+        // supporter's own depth, instead of the whole side converging on one
+        // row just ahead of the ball.
         target={
-          x:Phaser.Math.Linear(base.x,supportSpot.x,SUPPORT_BLEND),
-          y:Phaser.Math.Linear(base.y,supportSpot.y,SUPPORT_BLEND)
+          x:Phaser.Math.Linear(base.x,base.x+side*70,SUPPORT_BLEND),
+          y:Phaser.Math.Linear(base.y,carrier.body.position.y+attackDir*130,SUPPORT_Y_BLEND)
         };
       }
+      target=this._holdWidth(role,e,target);
     } else if(ballCarrier){
-      const d=Phaser.Math.Distance.Between(e.body.position.x,e.body.position.y,ballCarrier.body.position.x,ballCarrier.body.position.y);
-      if(d<PRESS_RANGE){
-        const ownGoalY=role==='A'?this.FIELD_H:0;
-        // Anchored on this player's own formation spot (base.x), not their
-        // live, already-drifted position — pressSpot fed back into itself
-        // via the live body position otherwise, so a player who'd nudged
-        // toward the ball last frame started this frame's press already
-        // closer in, compounding every tick into everyone (wingers
-        // included) collapsing onto the ball carrier instead of holding
-        // their own lane of the pitch.
-        const pressSpot={
-          x:Phaser.Math.Linear(ballCarrier.body.position.x,base.x,0.35),
-          y:Phaser.Math.Linear(ballCarrier.body.position.y,ownGoalY,0.15)
-        };
-        target={
-          x:Phaser.Math.Linear(base.x,pressSpot.x,PRESS_BLEND),
-          y:Phaser.Math.Linear(base.y,pressSpot.y,PRESS_BLEND)
-        };
+      const job=(defPlan||this._defensivePlan(role,activeId,ballCarrier)).get(e.id);
+      if(job){
+        pressing=job.blend===1;
+        target={x:Phaser.Math.Linear(base.x,job.x,job.blend),y:Phaser.Math.Linear(base.y,job.y,job.blend)};
       }
     }
-    return this._applyWander(e,target,iHaveBall);
+    target=this._applyWander(e,target,iHaveBall);
+    // The presser is meant to end up right next to the ball, alongside the
+    // active teammate chasing it, so spacing would only pull them off it.
+    return pressing?target:this._applySpacing(role,e,target);
+  }
+
+  /** In possession, wide slots stretch the play toward their touchline;
+   *  central ones are left alone. */
+  _holdWidth(role,e,target){
+    const f=(FORMATIONS[this.formation[role]]||FORMATIONS[DEFAULT_FORMATION])[e.slot];
+    if(!f||(f.x>=WING_SLOT_X&&f.x<=1-WING_SLOT_X)) return target;
+    const lineX=f.x<0.5?this.FIELD_W*WING_TOUCHLINE_GAP:this.FIELD_W*(1-WING_TOUCHLINE_GAP);
+    return {x:Phaser.Math.Linear(target.x,lineX,WING_BLEND),y:target.y};
+  }
+
+  /** Who does what off the ball while `role` defends against `carrier`:
+   *  a Map of player id -> {x,y,blend} for the one presser and the markers
+   *  (everyone else just holds formation). Anchored on formation spots and
+   *  live opponent positions only, never on the defenders' own drifted
+   *  positions, so it can't feed back into itself frame to frame. */
+  _defensivePlan(role,activeId,carrier){
+    const jobs=new Map();
+    if(!carrier?.body) return jobs;
+    const oppRole=role==='A'?'B':'A';
+    const team=role==='A'?this.teamA:this.teamB, oppTeam=oppRole==='A'?this.teamA:this.teamB;
+    const ownGoalY=role==='A'?this.FIELD_H:0;
+    const now=this.time.now, cp=carrier.body.position, bp=this.ball.position;
+    const goalSide=y=>Math.sign(ownGoalY-y)||1;
+    const eligible=team.filter(e=>e.slot!==0&&e.id!==activeId&&e.body&&!this._isOut(role,e.id)&&!this._isStunned(e.id,now));
+
+    let presser=null, pressD=PRESS_ENGAGE_RANGE;
+    for(const e of eligible){
+      const d=Phaser.Math.Distance.Between(e.body.position.x,e.body.position.y,cp.x,cp.y);
+      if(d<pressD){ pressD=d; presser=e; }
+    }
+    if(presser) jobs.set(presser.id,{x:cp.x,y:cp.y+goalSide(cp.y)*PRESS_GOAL_SIDE,blend:1});
+
+    const roles=SLOT_ROLES[this.formation[role]]||SLOT_ROLES[DEFAULT_FORMATION];
+    const markers=eligible.filter(e=>e!==presser&&roles[e.slot]!=='FW');
+    const runners=oppTeam.filter(o=>o.slot!==0&&o.id!==carrier.id&&o.body&&!this._isOut(oppRole,o.id));
+    const ballGoalDist=Math.abs(ownGoalY-bp.y);
+    const pairs=[];
+    for(const m of markers){
+      const home=this._formPos(role,m.slot,bp);
+      for(const r of runners){
+        const rp=r.body.position;
+        const d=Phaser.Math.Distance.Between(home.x,home.y,rp.x,rp.y);
+        if(d>MARK_RANGE) continue;
+        const dangerous=Math.abs(ownGoalY-rp.y)<ballGoalDist;
+        pairs.push({m,r,cost:d-(dangerous?MARK_DANGER_BONUS:0)});
+      }
+    }
+    pairs.sort((a,b)=>a.cost-b.cost);
+    const takenM=new Set(), takenR=new Set();
+    for(const {m,r} of pairs){
+      if(takenM.has(m.id)||takenR.has(r.id)) continue;
+      takenM.add(m.id); takenR.add(r.id);
+      const rp=r.body.position;
+      // Leaning toward the ball only sideways: shifting along the pitch too
+      // would drag the marker behind a runner who is deeper than the ball.
+      jobs.set(m.id,{
+        x:rp.x+(bp.x-rp.x)*MARK_BALL_SHIFT,
+        y:rp.y+goalSide(rp.y)*MARK_GOAL_SIDE,
+        blend:MARK_BLEND,
+        runnerId:r.id
+      });
+    }
+    return jobs;
+  }
+
+  /** Pushes an off-ball target out of any teammate's personal space, so the
+   *  side spreads across the pitch instead of knotting up. */
+  _applySpacing(role,e,target){
+    const team=role==='A'?this.teamA:this.teamB;
+    let x=target.x, y=target.y;
+    for(const t of team){
+      if(t===e||!t.body||this._isOut(role,t.id)) continue;
+      const dx=x-t.body.position.x, dy=y-t.body.position.y, d=Math.hypot(dx,dy);
+      if(d>=SPACING_MIN) continue;
+      // Exactly on top of each other: split by slot so the two don't both
+      // pick the same direction.
+      const ux=d>0.5?dx/d:(e.slot<t.slot?-1:1), uy=d>0.5?dy/d:0;
+      const push=(SPACING_MIN-d)*SPACING_PUSH;
+      x+=ux*push; y+=uy*push;
+    }
+    return {x:Phaser.Math.Clamp(x,30,this.FIELD_W-30),y:Phaser.Math.Clamp(y,40,this.FIELD_H-40)};
   }
 
   /** Nudges an off-ball target around with two slow out-of-phase sines so
@@ -2990,31 +3103,116 @@ export default class GameScene extends Phaser.Scene {
    *  actually under pressure right now, rather than passing at a flat
    *  rate regardless of whether anyone's actually closing them down. */
   _nearestOpponentDist(role,entry){
-    const oppRole=role==='A'?'B':'A';
-    const oppTeam=oppRole==='A'?this.teamA:this.teamB;
+    return this._nearestOpponentDistTo(role,entry.body.position.x,entry.body.position.y);
+  }
+  /** Closest opponent of `role` to an arbitrary point on the pitch. */
+  _nearestOpponentDistTo(role,x,y){
     let best=Infinity;
-    for(const o of oppTeam){
-      if(!o.body||this._isOut(oppRole,o.id)) continue;
-      const d=Phaser.Math.Distance.Between(entry.body.position.x,entry.body.position.y,o.body.position.x,o.body.position.y);
+    for(const o of this._liveOpponents(role)){
+      const d=Phaser.Math.Distance.Between(x,y,o.body.position.x,o.body.position.y);
       if(d<best) best=d;
     }
     return best;
   }
-  /** Picks a reasonable pass target for the AI: the most advanced teammate
-   *  (closer to the rival goal than the passer) within a sane passing
-   *  range, preferring the furthest-advanced one among nearby options. */
+  _liveOpponents(role){
+    const oppRole=role==='A'?'B':'A';
+    return (oppRole==='A'?this.teamA:this.teamB).filter(o=>o.body&&!this._isOut(oppRole,o.id));
+  }
+
+  /** The AI keeps a ball it has just won or received for a beat before
+   *  passing it on, instead of moving it on the instant it arrives. */
+  _aiMayPass(e,now){
+    if(this._aiHoldId!==e.id){ this._aiHoldId=e.id; this._aiHoldSince=now; }
+    return now-this._aiHoldSince>=AI_PASS_COOLDOWN_MS;
+  }
+
+  /** Where the AI ball carrier dribbles: toward goal down whichever lane
+   *  across the width has the most open grass just ahead (so it goes round
+   *  your players, and uses the wings when the middle is shut), then cuts
+   *  inside once it's close enough to set up the shot. */
+  _aiCarrierTarget(e){
+    const pos=e.body.position, goalY=this.FIELD_H;
+    if(goalY-pos.y<this._aiParams().shootRange+AI_CUT_IN_EXTRA) return {x:this.FIELD_W/2,y:goalY};
+    const aheadY=Math.min(pos.y+AI_LANE_AHEAD,goalY-40);
+    let bestX=pos.x, bestScore=-Infinity;
+    for(const f of AI_LANES){
+      const x=f*this.FIELD_W;
+      let score=Math.min(this._nearestOpponentDistTo('B',x,aheadY),AI_LANE_OPEN_CAP)-Math.abs(x-pos.x)*AI_LANE_SHIFT_COST;
+      if(this._aiLaneX===x) score+=AI_LANE_STICKY;
+      if(score>bestScore){ bestScore=score; bestX=x; }
+    }
+    this._aiLaneX=bestX;
+    return {x:bestX,y:aheadY+AI_LANE_AHEAD};
+  }
+
+  /** True if any of `role`'s opponents gets to the rolling part of a pass
+   *  from `from` to `to` before the ball does (and before `receiver` does).
+   *  The chipped first stretch (PASS_LOFT_FRAC) sails over everyone. */
+  _passIntercepted(role,from,to,receiver){
+    const dx=to.x-from.x, dy=to.y-from.y, len=Math.hypot(dx,dy)||1;
+    const rp=receiver.body.position;
+    for(const o of this._liveOpponents(role)){
+      const op=o.body.position;
+      for(let t=PASS_LOFT_FRAC*0.9;t<=1.0001;t+=0.1){
+        const px=from.x+dx*t, py=from.y+dy*t;
+        const dO=Math.hypot(op.x-px,op.y-py);
+        if(dO-INTERCEPT_REACH<t*len*INTERCEPT_SPEED_RATIO&&dO<Math.hypot(rp.x-px,rp.y-py)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** The AI's pass choice, read off where the opponent's players are:
+   *  - a pass one of them can cut out, or to a receiver they're standing on,
+   *    is never played;
+   *  - further forward is better, more so for each opponent the pass takes
+   *    out of the game, and switching to a far wing away from where they're
+   *    bunched earns a bonus;
+   *  - an onside runner near the opponent's back line can be found with a
+   *    through ball into the space behind it.
+   *  Returns {x,y,entry,bypassed,through} (x/y is where to aim) or null. */
   _aiPickPassTarget(role,entry){
     const team=role==='A'?this.teamA:this.teamB;
     const attackDir=role==='A'?-1:1; // A attacks decreasing y (their goal is at the bottom), B increasing y
-    let best=null,bestScore=-Infinity;
+    const p=this._aiParams();
+    const from=entry.body.position;
+    const opps=this._liveOpponents(role);
+    const goalDist=y=>this._distToGoal(y,role);
+    // Opponents between a spot and the goal it attacks: in front of it and
+    // not too far off to the side.
+    const ahead=pt=>opps.filter(o=>goalDist(o.body.position.y)<goalDist(pt.y)&&Math.abs(o.body.position.x-pt.x)<BYPASS_CORRIDOR).length;
+    const oppCentreX=opps.reduce((s,o)=>s+o.body.position.x,0)/(opps.length||1);
+    const passerAhead=ahead(from);
+    const lineDist=this._offsideLineDist(role,from.y);
+    const tryThrough=lineDist!=null&&Math.random()<(p.through??0);
+    const maxDist=PASS_MAX_DIST+(p.vision??0);
+
+    const score=(c,to,through)=>{
+      const dist=Math.hypot(to.x-from.x,to.y-from.y);
+      if(dist<50||dist>maxDist) return null; // too close to bother, too far to pick out
+      if(this._passIntercepted(role,from,to,c)) return null;
+      const bypassed=Math.max(0,passerAhead-ahead(to));
+      const openness=Math.min(this._nearestOpponentDistTo(role,to.x,to.y),200);
+      const wide=to.x<this.FIELD_W*WING_SLOT_X||to.x>this.FIELD_W*(1-WING_SLOT_X);
+      const switchBonus=wide?PASS_SWITCH_BONUS*Math.min(1,Math.abs(to.x-oppCentreX)/(this.FIELD_W/2)):0;
+      const s=(to.y-from.y)*attackDir-dist*0.15+openness*0.4+bypassed*PASS_BYPASS_BONUS+switchBonus+(through?THROUGH_BALL_BONUS:0);
+      return {x:to.x,y:to.y,entry:c,bypassed,through,score:s};
+    };
+
+    let best=null;
     for(const c of team){
-      if(c.id===entry.id||c.slot===0) continue; // not myself, not the keeper
-      const dx=c.body.position.x-entry.body.position.x, dy=c.body.position.y-entry.body.position.y;
-      const dist=Math.hypot(dx,dy);
-      if(dist<50||dist>560) continue; // too close to bother, too far to pick out
-      const advance=dy*attackDir; // positive = further forward than the passer
-      const score=advance-dist*0.15;
-      if(score>bestScore){ bestScore=score; best=c; }
+      if(c.id===entry.id||c.slot===0||!c.body||this._isOut(role,c.id)) continue; // not myself, not the keeper
+      const cp=c.body.position;
+      if(this._nearestOpponentDistTo(role,cp.x,cp.y)<RECEIVER_MARKED_DIST) continue;
+      const options=[score(c,{x:cp.x,y:cp.y},false)];
+      if(tryThrough){
+        const gap=goalDist(cp.y)-lineDist;
+        if(gap>=0&&gap<=THROUGH_BALL_NEAR_LINE){
+          const lead={x:cp.x,y:Phaser.Math.Clamp(cp.y+attackDir*THROUGH_BALL_LEAD,40,this.FIELD_H-40)};
+          if(goalDist(lead.y)<lineDist&&this._nearestOpponentDistTo(role,lead.x,lead.y)>THROUGH_BALL_SPACE) options.push(score(c,lead,true));
+        }
+      }
+      for(const o of options) if(o&&(!best||o.score>best.score)) best=o;
     }
     return best;
   }
@@ -3599,9 +3797,11 @@ export default class GameScene extends Phaser.Scene {
     let inputB=this.remoteInput;
     if(aiActive){
       const eB=this._activeEntry('B');
-      const ai=decideAIMove({selfPos:eB?eB.body.position:{x:this.FIELD_W/2,y:0},ballPos:this.ball.position,axis:'y',ownGoalValue:0,rivalGoalValue:this.FIELD_H,fieldPrimarySize:this.FIELD_H,
-        hasBall:this.possRole==='B',goalCentre:this.FIELD_W/2});
-      inputB={targets:eB?[{id:eB.id,...ai.target}]:[],shootRequest:false,passTarget:null,confrontationChoice:null,subRequest:null,repositionRequest:null,formationChange:null};
+      if(this.possRole!=='B') this._aiHoldId=null; // next time it has the ball, the hold starts over
+      const target=!eB?null
+        :this.possRole==='B'?this._aiCarrierTarget(eB)
+        :decideAIMove({selfPos:eB.body.position,ballPos:this.ball.position,axis:'y',ownGoalValue:0,rivalGoalValue:this.FIELD_H,fieldPrimarySize:this.FIELD_H}).target;
+      inputB={targets:target?[{id:eB.id,...target}]:[],shootRequest:false,passTarget:null,confrontationChoice:null,subRequest:null,repositionRequest:null,formationChange:null};
       if(!this.paused&&!this.confrontation&&!this.matchClock.ended) this._aiConsiderSub(now);
     }
     this.currentPossession=this.possRole;
@@ -3630,12 +3830,14 @@ export default class GameScene extends Phaser.Scene {
         const eB=this._activeEntry('B'), p=this._aiParams();
         // Shoot as soon as it's in range rather than dithering around the box
         if(eB&&eB.body.position.y>this.FIELD_H-p.shootRange&&Math.random()<p.shootChance) this._startConfront('shot','B','A',now);
-        else if(eB){
+        else if(eB&&this._aiMayPass(eB,now)){
           const underPressure=this._nearestOpponentDist('B',eB)<PRESS_RANGE;
           const passChance=underPressure?p.passChance:p.passChance*PASS_CHANCE_FREE_MULT;
           if(Math.random()<passChance){
-            const mate=this._aiPickPassTarget('B',eB);
-            if(mate) this._doPass('B',{x:mate.body.position.x,y:mate.body.position.y});
+            const pass=this._aiPickPassTarget('B',eB);
+            // Unpressured, only a pass that actually gets past someone (or
+            // finds a runner in behind) is worth giving the ball up for.
+            if(pass&&(underPressure||pass.bypassed>0||pass.through)) this._doPass('B',{x:pass.x,y:pass.y});
           }
         }
       }
@@ -3670,6 +3872,7 @@ export default class GameScene extends Phaser.Scene {
     const iHaveBall=this.possRole===role;
     const oppHasBall=!!this.possRole&&this.possRole!==role;
     const ballCarrier=oppHasBall?this._activeEntry(this.possRole):null;
+    const defPlan=ballCarrier?this._defensivePlan(role,activeId,ballCarrier):null;
     team.forEach(e=>{
       if(this._isOut(role,e.id)) return; // sent off: frozen, invisible, ignored entirely
       if(this._isStunned(e.id,now)){
@@ -3699,7 +3902,7 @@ export default class GameScene extends Phaser.Scene {
         // Autonomous position: hold roughly to formation, but lean into a
         // supporting run when we have the ball, or press the ball carrier
         // when the opponent does.
-        const autoPos=this._offBallTarget(role,e,activeId,iHaveBall,ballCarrier);
+        const autoPos=this._offBallTarget(role,e,activeId,iHaveBall,ballCarrier,defPlan);
         this._steer(e.body,autoPos,sp,AUTO_STEER_FORCE);
         // Soft speed cap for autonomous movement — scaled by the player's
         // own speed stat too, so quick players still look quick off the ball.
