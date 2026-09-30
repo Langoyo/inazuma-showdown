@@ -46,7 +46,10 @@ test.describe('profile', () => {
     const profileY = await y('#profile-section summary');
     expect(profileY).toBeGreaterThan(await y('#formation-select'));
     expect(profileY).toBeGreaterThan(await y('#formation-pitch'));
-    expect(profileY).toBeGreaterThan(await y('#squad-save-row'));
+    expect(profileY).toBeGreaterThan(await y('#squad-name-row'));
+    // The profile is the only place to save and load squads.
+    await expect(page.locator('#squad-save-btn')).toHaveCount(0);
+    await expect(page.locator('#squad-load-btn')).toHaveCount(0);
 
     // Collapsed by default, so it doesn't push the pitch around until asked.
     await expect(page.locator('#profile-name')).toBeHidden();
@@ -55,6 +58,28 @@ test.describe('profile', () => {
 
     await page.click('button[data-view="formation"]');
     await expect(page.locator('#profile-section')).toBeHidden();
+  });
+
+  test('a squad saved with the old one-slot button is moved into the profile once', async ({ page }) => {
+    // addInitScript re-runs on every load, so only seed when there's no
+    // marker yet — otherwise the reload below would re-plant the old save.
+    await page.addInitScript(() => {
+      if (localStorage.getItem('__seeded')) return;
+      localStorage.setItem('__seeded', '1');
+      localStorage.setItem('inazuma-clone:squad:v1', JSON.stringify({
+        name: 'Old Faithful', formation: '4-3-3', slots: ['x'], bench: [], savedAt: 1700000000000,
+      }));
+    });
+    await waitForRosterLoaded(page);
+    await openProfile(page);
+    await expect(page.locator('.profile-squad')).toHaveCount(1);
+    await expect(page.locator('.profile-squad input')).toHaveValue('Old Faithful');
+    expect(await page.evaluate(() => localStorage.getItem('inazuma-clone:squad:v1'))).toBeNull();
+
+    await page.reload();
+    await page.waitForFunction(() => document.querySelectorAll('#squad-pick-list .pick-card').length > 0, { timeout: 15000 });
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('inazuma-clone:profile:v1')));
+    expect(stored.squads).toHaveLength(1);
   });
 
   test('saves the current squad, lists it, and loads it back after the editor changes', async ({ page }) => {

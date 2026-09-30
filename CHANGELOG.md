@@ -26,7 +26,9 @@ and how to run it, see [`README.md`](./README.md).
   import merges by squad name and is validated (unknown formations fall back
   to 4-4-2, sizes are capped, names are rendered as text, never HTML). Still
   no backend: the working copy lives in `localStorage`, the file is the
-  backup/transfer format. The older one-slot Save/Load is unchanged.
+  backup/transfer format. It replaces the old one-slot 💾 Save / 📂 Load
+  buttons, which are gone; a squad saved with them is moved into the profile
+  the first time the game loads.
 
 ## Browse-players filters, team names, a clearer font, and a few smaller fixes
 A batch of independent gameplay/UX requests, landed together:

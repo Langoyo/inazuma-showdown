@@ -357,16 +357,13 @@
       background: rgba(255,217,102,0.12); border: 2px solid var(--gold);
     }
     #pick-scope b { color: var(--gold); }
-    #squad-save-row {
-      display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    #squad-name-row {
+      display: flex; gap: 6px; align-items: center;
       margin-top: 12px; padding-top: 10px; border-top: 2px dashed rgba(255,255,255,0.12);
     }
-    #squad-save-row input { flex: 1; min-width: 110px; font-size: 12px; padding: 4px 8px; }
-    #squad-save-row .nes-btn { font-size: 11px; padding: 2px 8px; margin: 0; }
-    #squad-save-status { flex-basis: 100%; font-size: 11px; opacity: 0.9; color: var(--green); }
-    #squad-save-status:empty { display: none; }
+    #squad-name-row input { flex: 1; min-width: 110px; font-size: 12px; padding: 4px 8px; }
 
-    /* ---- profile section (under the save row in the squad editor) */
+    /* ---- profile section (under the team-name row in the squad editor) */
     #profile-section { margin-top: 10px; padding-top: 10px; border-top: 2px dashed rgba(255,255,255,0.12); }
     #profile-section summary { cursor: pointer; font-size: 12px; user-select: none; }
     .profile-body { width: 100%; display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
@@ -771,13 +768,10 @@
         <button id="squad-place-cancel-btn" class="nes-btn is-compact">Cancel</button>
       </div>
 
-      <!-- Keep the squad you built between sessions (this browser only),
-           along with its team name. A secondary action, so it sits last. -->
-      <div id="squad-save-row">
+      <!-- Team name: shown on the scoreboard and used to name the squad when
+           it's saved to the profile below. -->
+      <div id="squad-name-row">
         <input id="squad-team-name" type="text" class="pixel-select" placeholder="Team name (optional)" />
-        <button id="squad-save-btn" class="nes-btn">💾 Save</button>
-        <button id="squad-load-btn" class="nes-btn" disabled>📂 Load</button>
-        <span id="squad-save-status"></span>
       </div>
 
       <!-- Profile: your name plus every squad you've saved, kept in this

@@ -988,8 +988,6 @@ export default class GameScene extends Phaser.Scene {
       if(path.includes(columns)||path.includes(openToggle)||path.includes(statPanel)) return;
       this._toggleSquadSection('players');
     });
-    document.getElementById('squad-save-btn').addEventListener('click',()=>this._saveSquad());
-    document.getElementById('squad-load-btn').addEventListener('click',()=>this._loadSquad());
     document.getElementById('profile-name').addEventListener('change',e=>this._profileSetPlayerName(e.target.value));
     document.getElementById('profile-save-current-btn').addEventListener('click',()=>this._profileSaveCurrent());
     document.getElementById('profile-download-btn').addEventListener('click',()=>this._profileDownload());
@@ -1025,7 +1023,7 @@ export default class GameScene extends Phaser.Scene {
     this.squadSectionOpen={formation:true,players:window.innerWidth>=900};
     this._applySquadSectionVisibility();
     this._renderPitch(); this._renderPickList();
-    this._refreshSavedSquadUI();
+    this._migrateLegacySquad();
     this._refreshProfile();
     // Tournament state lives entirely in localStorage (see tournament.js) —
     // _returnToMenu does a full page reload after every match, which wipes
@@ -1034,39 +1032,11 @@ export default class GameScene extends Phaser.Scene {
     this._tournamentPendingFixture=null;
   }
 
-  // ---- saved squad (this browser only) ---------------------------------
-  /** Picking eleven out of ~5000 is a lot of work to redo every session, so
-   *  the squad you built is kept in localStorage — ids only, resolved against
-   *  the roster on load so a player who's since gone from the data is simply
-   *  skipped rather than breaking the lot. */
-  _savedSquadKey(){ return 'inazuma-clone:squad:v1'; }
-  _readSavedSquad(){
-    try{ return JSON.parse(localStorage.getItem(this._savedSquadKey())||'null'); }
-    catch{ return null; }
-  }
-  _saveSquad(){
-    const payload={
-      name:document.getElementById('squad-team-name').value.trim(),
-      slots:this.squadSlots.slice(),
-      bench:[...this.benchIds],
-      formation:this.chosenFormation,
-      savedAt:Date.now()
-    };
-    try{
-      localStorage.setItem(this._savedSquadKey(),JSON.stringify(payload));
-      const label=payload.name?`"${payload.name}" — `:'';
-      this._flashSquadStatus(`Saved ${label}${payload.slots.filter(Boolean).length}/11 and ${payload.bench.length} on the bench`);
-    }catch(err){
-      this._flashSquadStatus(`Couldn't save: ${err.message}`);
-    }
-    this._refreshSavedSquadUI();
-  }
-  _loadSquad(){
-    const saved=this._readSavedSquad();
-    if(saved) this._applySavedSquad(saved);
-  }
-  /** Puts a `{name,slots,bench,formation}` record into the editor — shared by
-   *  the one-slot browser save and the profile's squad list. */
+  // ---- saved squads ------------------------------------------------------
+  /** Puts a `{name,slots,bench,formation}` profile squad into the editor.
+   *  Squads store ids only, resolved against the roster here, so a player
+   *  who's since gone from the data is skipped rather than breaking the lot;
+   *  returns how many starters were placed and how many had to be dropped. */
   _applySavedSquad(saved){
     const known=id=>id&&getPlayerById(id)?id:null;
     const slots=(saved.slots||[]).slice(0,TEAM_SIZE).map(known);
@@ -1080,19 +1050,7 @@ export default class GameScene extends Phaser.Scene {
     this.squadSlots=slots; this.benchIds=bench;
     document.getElementById('squad-team-name').value=saved.name||'';
     this._setEditSide('me'); // a saved squad is always your own side
-    this._flashSquadStatus(`Loaded ${slots.filter(Boolean).length}/11${dropped?` — ${dropped} player(s) no longer in the roster`:''}`);
-  }
-  _refreshSavedSquadUI(){
-    const saved=this._readSavedSquad();
-    const btn=document.getElementById('squad-load-btn');
-    btn.disabled=!saved;
-    btn.textContent=saved?`📂 Load (${(saved.slots||[]).filter(Boolean).length}/11)`:'📂 Load';
-  }
-  _flashSquadStatus(msg){
-    const el=document.getElementById('squad-save-status');
-    el.textContent=msg;
-    clearTimeout(this._squadStatusTimer);
-    this._squadStatusTimer=setTimeout(()=>{ el.textContent=''; },4000);
+    return {filled:slots.filter(Boolean).length,dropped};
   }
 
   // ---- profile (kept in this browser, exportable as a file) ---------------
@@ -1125,6 +1083,19 @@ export default class GameScene extends Phaser.Scene {
   _profileStatus(msg,isError=false){
     const el=document.getElementById('profile-status');
     el.textContent=msg; el.classList.toggle('is-error',isError);
+  }
+  /** Folds the single-slot save the old 💾/📂 buttons wrote into the profile,
+   *  once, then drops it — so nobody loses a squad when those went away. */
+  _migrateLegacySquad(){
+    const key='inazuma-clone:squad:v1';
+    let legacy=null;
+    try{ legacy=JSON.parse(localStorage.getItem(key)||'null'); }catch{ /* unreadable: leave it */ }
+    if(!legacy||typeof legacy!=='object') return;
+    const [squad]=this._cleanProfile({squads:[{...legacy,name:legacy.name||'Saved squad',id:undefined}]}).squads;
+    const profile=this._readProfile();
+    if(!profile.squads.some(s=>s.name.toLowerCase()===squad.name.toLowerCase())) profile.squads.push(squad);
+    if(!this._writeProfile(this._cleanProfile(profile))) return;
+    try{ localStorage.removeItem(key); }catch{ /* harmless: the name check above stops a duplicate */ }
   }
   _refreshProfile(){
     document.getElementById('profile-name').value=this._readProfile().playerName;
@@ -1192,8 +1163,8 @@ export default class GameScene extends Phaser.Scene {
   }
   _profileLoad(id){
     const s=this._readProfile().squads.find(x=>x.id===id); if(!s) return;
-    this._applySavedSquad(s);
-    this._profileStatus(`Loaded "${s.name}" into the editor`);
+    const {filled,dropped}=this._applySavedSquad(s);
+    this._profileStatus(`Loaded "${s.name}" (${filled}/11)${dropped?` — ${dropped} player(s) no longer in the roster`:''}`);
   }
   _profileUpdate(id){
     const profile=this._readProfile();
