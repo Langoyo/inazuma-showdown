@@ -441,6 +441,22 @@
        stray button. */
     .filter-field { display: flex; flex: 1; min-width: 120px; gap: 4px; align-items: stretch; }
     .filter-field input, .filter-field select { flex: 1; min-width: 0; }
+    /* Type-to-search filters (see _makeCombobox): the real <select> stays
+       hidden as the source of truth, the suggestion list drops under the box. */
+    .combo { position: relative; flex: 1; min-width: 0; display: flex; }
+    .combo-native { display: none; }
+    .combo-list {
+      position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
+      margin: 2px 0 0; padding: 0; list-style: none;
+      max-height: 240px; overflow-y: auto;
+      background: var(--panel); border: 3px solid #000;
+    }
+    /* The team box sits in the left column: let its list run wider than the
+       half-width field so "Team · Era (n)" fits on one line. */
+    #squad-team-filter-list { right: auto; min-width: min(280px, calc(100vw - 32px)); }
+    .combo-list li { padding: 8px 10px; min-height: 32px; box-sizing: border-box; font-size: 13px; cursor: pointer; }
+    .combo-list li.active, .combo-list li:hover { background: var(--gold); color: #1b1b1b; }
+    .combo-list li.disabled, .combo-list li.combo-empty { opacity: 0.45; cursor: default; background: none; color: inherit; }
     .filter-reset-btn {
       flex: 0 0 auto; width: 26px; border: 2px solid #000; background: var(--panel-2);
       color: var(--white); cursor: pointer; font-size: 12px; line-height: 1;

@@ -997,6 +997,10 @@ export default class GameScene extends Phaser.Scene {
     document.getElementById('pitch-randomize-btn').addEventListener('click',()=>this._randomize());
     document.getElementById('squad-whole-team-btn').addEventListener('click',()=>this._useWholeTeam());
     document.getElementById('squad-search').addEventListener('input',()=>this._renderPickListReset());
+    this._combos=[
+      this._makeCombobox(document.getElementById('squad-game-filter'),'Game…'),
+      this._makeCombobox(document.getElementById('squad-team-filter'),'Team…'),
+    ];
     ['squad-game-filter','squad-team-filter','squad-position-filter'].forEach(id=>
       document.getElementById(id).addEventListener('change',()=>{ this._refreshFilterOptions(); this._renderPickListReset(); }));
     document.getElementById('squad-sort-select').addEventListener('change',()=>this._renderPickListReset());
@@ -1881,6 +1885,88 @@ export default class GameScene extends Phaser.Scene {
       o.textContent=`${o.value} (${n})`;
       o.disabled=n===0&&o.value!==pf;
     });
+    (this._combos||[]).forEach(c=>c.sync());
+  }
+
+  /** Turns a filter <select> into a type-to-search box: typing narrows a
+   *  list of suggestions taken from the select's own (already linked and
+   *  counted) options, and picking one sets the select and fires its
+   *  `change`, so everything wired to the select works as before. The
+   *  select stays in the DOM, hidden, as the source of truth. */
+  _makeCombobox(select,placeholder){
+    const wrap=document.createElement('div'); wrap.className='combo';
+    const input=document.createElement('input');
+    const list=document.createElement('ul');
+    const listId=`${select.id}-list`;
+    Object.assign(input,{type:'text',id:`${select.id}-input`,className:'combo-input',placeholder,autocomplete:'off',spellcheck:false});
+    input.setAttribute('role','combobox'); input.setAttribute('aria-autocomplete','list');
+    input.setAttribute('aria-expanded','false'); input.setAttribute('aria-controls',listId);
+    Object.assign(list,{id:listId,className:'combo-list',hidden:true}); list.setAttribute('role','listbox');
+    wrap.append(input,list);
+    select.parentElement.insertBefore(wrap,select);
+    select.classList.add('combo-native');
+
+    const norm=s=>s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+    // An era option only makes sense next to its team's name.
+    const labelOf=o=>o.parentElement.tagName==='OPTGROUP'?`${o.parentElement.label} · ${o.textContent}`:o.textContent;
+    let shown=[], active=-1;
+    const setActive=i=>{
+      active=i;
+      [...list.children].forEach((li,j)=>li.classList.toggle('active',j===i));
+      const li=list.children[i];
+      if(li){ input.setAttribute('aria-activedescendant',li.id); li.scrollIntoView({block:'nearest'}); }
+      else input.removeAttribute('aria-activedescendant');
+    };
+    const render=()=>{
+      const q=norm(input.value.trim());
+      const opts=[...select.options].map(o=>({value:o.value,label:o.value?labelOf(o):o.textContent,disabled:o.disabled}));
+      // "All …" leads the untouched list; once you type, only matches show —
+      // names starting with what you typed first, then a word starting with
+      // it, then anywhere ("rai" → Raimon before Brainwashing).
+      const rank=e=>{ const l=norm(e.label); return l.startsWith(q)?0:new RegExp(`(^|[^a-z0-9])${q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}`).test(l)?1:2; };
+      shown=q?opts.filter(e=>e.value&&norm(e.label).includes(q)).map(e=>({e,r:rank(e)})).sort((a,b)=>a.r-b.r).map(x=>x.e).slice(0,50):opts;
+      list.replaceChildren(...shown.map((e,i)=>{
+        const li=document.createElement('li');
+        li.id=`${listId}-${i}`; li.textContent=e.label; li.setAttribute('role','option');
+        if(e.disabled){ li.classList.add('disabled'); li.setAttribute('aria-disabled','true'); }
+        // pointerdown + preventDefault keeps focus in the input, so picking
+        // doesn't first fire the blur that would close the list.
+        li.addEventListener('pointerdown',ev=>{ ev.preventDefault(); if(!e.disabled) pick(e); });
+        return li;
+      }));
+      if(!shown.length){ const li=document.createElement('li'); li.className='combo-empty'; li.textContent='No matches'; list.appendChild(li); }
+      setActive(-1);
+    };
+    const open=()=>{ render(); list.hidden=false; input.setAttribute('aria-expanded','true'); };
+    const close=()=>{ list.hidden=true; input.setAttribute('aria-expanded','false'); setActive(-1); };
+    const sync=()=>{ const o=select.selectedOptions[0]; input.value=o&&o.value?labelOf(o):''; };
+    const pick=e=>{
+      close();
+      if(select.value!==e.value){ select.value=e.value; select.dispatchEvent(new Event('change')); }
+      sync();
+    };
+    input.addEventListener('focus',()=>{ open(); input.select(); });
+    input.addEventListener('input',open);
+    input.addEventListener('keydown',ev=>{
+      if(ev.key==='ArrowDown'||ev.key==='ArrowUp'){
+        ev.preventDefault();
+        if(list.hidden) open();
+        const step=ev.key==='ArrowDown'?1:-1;
+        for(let i=active+step;i>=0&&i<shown.length;i+=step) if(!shown[i].disabled){ setActive(i); break; }
+      } else if(ev.key==='Enter'){
+        ev.preventDefault();
+        const e=active>=0?shown[active]:(!input.value.trim()?{value:''}:null);
+        if(e) pick(e);
+      } else if(ev.key==='Escape'){ sync(); close(); input.blur(); }
+    });
+    // Leaving the box never turns half-typed text into a filter: it either
+    // clears (empty box = "All …") or goes back to what's selected.
+    input.addEventListener('blur',()=>{
+      if(!input.value.trim()&&select.value) pick({value:''});
+      else { sync(); close(); }
+    });
+    sync();
+    return {sync};
   }
   /** Splits a `squad-team-filter` value back into {team, game} — plain team
    *  filters (single-game teams, or the "All eras" option) have no game. */

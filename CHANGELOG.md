@@ -4,6 +4,22 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Type-to-search Team and Game filters
+The Team filter was a native dropdown with 100+ entries, era sub-options
+included, which is slow to scroll, especially on a phone. Team and Game
+are now type-to-search boxes (`_makeCombobox`). Typing narrows a list of
+suggestions: "rai" gives Raimon and each of its eras ("Raimon · IE2
+(10)"), and "ie2" finds every team's IE2 era. Matching ignores case and
+accents. Names starting with what you typed come first, then a word
+starting with it, then anything containing it. Pick with a tap or click,
+or with ↑/↓ and Enter. Escape or clicking away puts back what was
+selected, so half-typed text never becomes a filter, and emptying the
+box means "All". Suggestions come from the same linked, counted options
+as before, so a chosen game still narrows the team suggestions and vice
+versa. The hidden `<select>`s remain the source of truth, so the ✕
+buttons, "whole team" and the list filtering work unchanged. Position
+stays a plain dropdown.
+
 ## A gentler AI on Normal
 The smarter AI turned out too sharp on Normal, so how hard the rival
 defends and attacks now scales with difficulty (new `AI_LEVELS` fields):
