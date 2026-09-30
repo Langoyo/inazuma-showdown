@@ -12,11 +12,11 @@ A batch of independent gameplay/UX requests, landed together:
   by Load. The whole save row moved below the pitch and bench as a smaller,
   secondary control rather than sitting above the formation. Accounts with profile-saved formations were built alongside this
   and then dropped before merging — it stays a no-backend game for now.
-- **Dice squad stars.** The 🎲 random squad now always includes one starter
-  from the top 10 of their position and two more from the top 30 (ranked
-  within each position). Before, it was 2–3 picks from the top 20%, which
-  with ~800 players per position rarely felt like stars. The other 8
-  starters and the bench stay fully random.
+- **Dice squad stars.** The 🎲 random squad now always includes five standout
+  starters: one from the top 10 of their position, two more from the top 30,
+  and two from the top 40 (ranked within each position). Before, it was 2–3
+  picks from the top 20%, which with ~800 players per position rarely felt
+  like stars. The other 6 starters and the bench stay fully random.
 - **Browse Players filters.** Added a position filter (GK/DF/MF/FW,
   independent of the existing "filling this pitch spot" scope-lock), a
   small "✕" next to every filter to clear just that one, and wrapped the

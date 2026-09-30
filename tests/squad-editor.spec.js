@@ -4,14 +4,14 @@ import { waitForRosterLoaded } from './helpers.js';
 test.describe('random squad builder', () => {
   // Rebuilds, in-page, the same per-position top-N pools _randomize() draws
   // its stars from (a pure function of the roster) as sets of player ids.
-  test('the dice fills 11 starters + a bench, with 1 top-10 and at least 3 top-30 starters', async ({ page }) => {
+  test('the dice fills 11 starters + a bench, with 1 top-10, 3 top-30, and 5 top-40 starters', async ({ page }) => {
     await waitForRosterLoaded(page);
     await page.click('#pitch-randomize-btn');
 
     const result = await page.evaluate(() => {
       const s = window.__scene;
       const ids = (n) => new Set(Object.values(s._topNByPosition(s.rosterAll, n)).flat().map((p) => p.id));
-      const top10 = ids(10), top30 = ids(30);
+      const top10 = ids(10), top30 = ids(30), top40 = ids(40);
       const starterIds = s.squadSlots.filter(Boolean);
       const benchIds = [...s.benchIds];
       return {
@@ -19,6 +19,7 @@ test.describe('random squad builder', () => {
         benchCount: benchIds.length,
         top10Count: starterIds.filter((id) => top10.has(id)).length,
         top30Count: starterIds.filter((id) => top30.has(id)).length,
+        top40Count: starterIds.filter((id) => top40.has(id)).length,
         uniqueCount: new Set([...starterIds, ...benchIds]).size,
       };
     });
@@ -29,6 +30,7 @@ test.describe('random squad builder', () => {
     // pool too, so these check the guaranteed floor, not an exact count.
     expect(result.top10Count).toBeGreaterThanOrEqual(1);
     expect(result.top30Count).toBeGreaterThanOrEqual(3);
+    expect(result.top40Count).toBeGreaterThanOrEqual(5);
     // Nobody is placed twice (starters and bench are disjoint).
     expect(result.uniqueCount).toBe(result.starterCount + result.benchCount);
   });
@@ -38,31 +40,32 @@ test.describe('random squad builder', () => {
     const failures = await page.evaluate(() => {
       const s = window.__scene;
       const ids = (n) => new Set(Object.values(s._topNByPosition(s.rosterAll, n)).flat().map((p) => p.id));
-      const top10 = ids(10), top30 = ids(30);
+      const top10 = ids(10), top30 = ids(30), top40 = ids(40);
       const bad = [];
       for (let i = 0; i < 20; i++) {
         s._randomize();
         const starterIds = s.squadSlots.filter(Boolean);
         const t10 = starterIds.filter((id) => top10.has(id)).length;
         const t30 = starterIds.filter((id) => top30.has(id)).length;
-        if (starterIds.length !== 11 || t10 < 1 || t30 < 3) bad.push({ roll: i, starters: starterIds.length, t10, t30 });
+        const t40 = starterIds.filter((id) => top40.has(id)).length;
+        if (starterIds.length !== 11 || t10 < 1 || t30 < 3 || t40 < 5) bad.push({ roll: i, starters: starterIds.length, t10, t30, t40 });
       }
       return bad;
     });
     expect(failures).toEqual([]);
   });
 
-  test('not every starter is a top-30 pick — it stays a mixed, surprising squad', async ({ page }) => {
+  test('not every starter is a top-40 pick — it stays a mixed, surprising squad', async ({ page }) => {
     await waitForRosterLoaded(page);
     // A single roll could in principle land all-star by chance, so roll
     // several times and check at least one comes back mixed — confirming
     // the dice isn't secretly "all top players" every time.
     const anyMixed = await page.evaluate(() => {
       const s = window.__scene;
-      const top30 = new Set(Object.values(s._topNByPosition(s.rosterAll, 30)).flat().map((p) => p.id));
+      const top40 = new Set(Object.values(s._topNByPosition(s.rosterAll, 40)).flat().map((p) => p.id));
       for (let i = 0; i < 15; i++) {
         s._randomize();
-        if (s.squadSlots.filter(Boolean).some((id) => !top30.has(id))) return true;
+        if (s.squadSlots.filter(Boolean).some((id) => !top40.has(id))) return true;
       }
       return false;
     });
