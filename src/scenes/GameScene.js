@@ -579,9 +579,7 @@ export default class GameScene extends Phaser.Scene {
     document.getElementById('squad-pick-list').innerHTML='<p style="opacity:.8;font-size:12px;">Loading roster…</p>';
     loadRoster().then(data=>{
       this.rosterAll=data;
-      const gs=document.getElementById('squad-game-filter');
-      getGames().forEach(g=>{ const o=document.createElement('option'); o.value=g; o.textContent=g; gs.appendChild(o); });
-      this._populateTeamFilter();
+      this._refreshFilterOptions();
       // Several characters (Mark Evans, Axel Blaze...) show up once per game
       // they appeared in, as separate roster entries with their own stats —
       // same name, same real team, so cards need the game tag too or they're
@@ -996,9 +994,8 @@ export default class GameScene extends Phaser.Scene {
     document.getElementById('pitch-randomize-btn').addEventListener('click',()=>this._randomize());
     document.getElementById('squad-whole-team-btn').addEventListener('click',()=>this._useWholeTeam());
     document.getElementById('squad-search').addEventListener('input',()=>this._renderPickListReset());
-    document.getElementById('squad-game-filter').addEventListener('change',()=>this._renderPickListReset());
-    document.getElementById('squad-team-filter').addEventListener('change',()=>this._renderPickListReset());
-    document.getElementById('squad-position-filter').addEventListener('change',()=>this._renderPickListReset());
+    ['squad-game-filter','squad-team-filter','squad-position-filter'].forEach(id=>
+      document.getElementById(id).addEventListener('change',()=>{ this._refreshFilterOptions(); this._renderPickListReset(); }));
     document.getElementById('squad-sort-select').addEventListener('change',()=>this._renderPickListReset());
     // Each filter's own "x" clears just that field (back to its default
     // value) and re-renders — data-reset names the element it resets, so
@@ -1007,6 +1004,7 @@ export default class GameScene extends Phaser.Scene {
       btn.addEventListener('click',()=>{
         const el=document.getElementById(btn.dataset.reset);
         el.value='';
+        this._refreshFilterOptions();
         this._renderPickListReset();
       });
     });
@@ -1815,38 +1813,67 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Most real teams recur across several games (Raimon alone spans
-   *  IE1/IE2/IE3/GO1/GO2/GO3/Ares, each with a totally different XI) — a
-   *  flat "Raimon" filter option used to pool every era together, which
-   *  buries a specific squad in a much bigger, mixed-era one. A team with
-   *  just one game's worth of players stays a single plain option; one that
-   *  spans several gets an <optgroup> with an "All eras" option (the old
-   *  behaviour) plus one option per game, so a specific era's roster is
-   *  directly selectable instead of always getting the merged pool. */
-  _populateTeamFilter(){
+  /** The Game, Team and Position filters are linked: each dropdown only
+   *  offers what the other two leave (faceted), with player counts, so you
+   *  can't pick a combination that shows nobody. A selection that's still
+   *  on offer is kept; one that isn't falls back to "All …".
+   *  Most real teams recur across several games (Raimon alone spans
+   *  IE1/IE2/IE3/GO1/GO2/GO3/Ares, each with a totally different XI), so
+   *  with no game picked a multi-era team gets an <optgroup> with "All
+   *  eras" plus one option per game; a single-era team, or any team once a
+   *  game is picked, is one plain option. */
+  _refreshFilterOptions(){
+    const gs=document.getElementById('squad-game-filter');
     const ts=document.getElementById('squad-team-filter');
+    const ps=document.getElementById('squad-position-filter');
     const gameOrder=getGames();
+    const gf=gs.value, pf=ps.value;
+    const {team:tfTeam,game:tfGame}=this._parseTeamFilter(ts.value);
+    const opt=(parent,value,text,disabled=false)=>{ const o=document.createElement('option'); o.value=value; o.textContent=text; o.disabled=disabled; parent.appendChild(o); return o; };
+    const byGameOrder=(a,b)=>gameOrder.indexOf(a)-gameOrder.indexOf(b);
+    const roster=this.rosterAll;
+
+    // Games: narrowed by team (and its era) and position.
+    const gameCounts=new Map();
+    for(const p of roster) if((!tfTeam||p.team===tfTeam)&&(!tfGame||p.game===tfGame)&&(!pf||p.position===pf)) gameCounts.set(p.game,(gameCounts.get(p.game)||0)+1);
+    gs.innerHTML=''; opt(gs,'','All games');
+    [...gameCounts.keys()].sort(byGameOrder).forEach(g=>opt(gs,g,`${g} (${gameCounts.get(g)})`));
+    gs.value=gameCounts.has(gf)?gf:'';
+    const game=gs.value;
+
+    // Teams: narrowed by game and position. With a game picked, eras are
+    // implied, so each team is one plain option.
     const byTeam=new Map();
-    this.rosterAll.forEach(p=>{
-      if(!p.team) return;
+    for(const p of roster){
+      if(!p.team||(game&&p.game!==game)||(pf&&p.position!==pf)) continue;
       if(!byTeam.has(p.team)) byTeam.set(p.team,new Map());
-      const gm=byTeam.get(p.team);
-      gm.set(p.game,(gm.get(p.game)||0)+1);
-    });
+      const gm=byTeam.get(p.team); gm.set(p.game,(gm.get(p.game)||0)+1);
+    }
+    ts.innerHTML=''; opt(ts,'','All teams');
+    const values=new Set();
     [...byTeam.keys()].sort((a,b)=>a.localeCompare(b)).forEach(team=>{
-      const gameCounts=byTeam.get(team);
-      const games=[...gameCounts.keys()].sort((a,b)=>gameOrder.indexOf(a)-gameOrder.indexOf(b));
-      if(games.length<=1){
-        const o=document.createElement('option'); o.value=team; o.textContent=team; ts.appendChild(o);
-        return;
-      }
-      const total=[...gameCounts.values()].reduce((s,n)=>s+n,0);
+      const counts=byTeam.get(team);
+      const total=[...counts.values()].reduce((s,n)=>s+n,0);
+      const games=[...counts.keys()].sort(byGameOrder);
+      values.add(team);
+      if(game||games.length<=1){ opt(ts,team,`${team} (${total})`); return; }
       const group=document.createElement('optgroup'); group.label=team;
-      const allOpt=document.createElement('option'); allOpt.value=team; allOpt.textContent=`All eras (${total})`; group.appendChild(allOpt);
-      games.forEach(g=>{
-        const o=document.createElement('option'); o.value=`${team}::${g}`; o.textContent=`${g} (${gameCounts.get(g)})`; group.appendChild(o);
-      });
+      opt(group,team,`All eras (${total})`);
+      games.forEach(g=>{ opt(group,`${team}::${g}`,`${g} (${counts.get(g)})`); values.add(`${team}::${g}`); });
       ts.appendChild(group);
+    });
+    const wanted=tfGame&&!game?`${tfTeam}::${tfGame}`:tfTeam;
+    ts.value=wanted&&values.has(wanted)?wanted:'';
+
+    // Positions: narrowed by game and team.
+    const {team:t2,game:g2}=this._parseTeamFilter(ts.value);
+    const posCounts={};
+    for(const p of roster) if((!game||p.game===game)&&(!t2||p.team===t2)&&(!g2||p.game===g2)) posCounts[p.position]=(posCounts[p.position]||0)+1;
+    [...ps.options].forEach(o=>{
+      if(!o.value) return;
+      const n=posCounts[o.value]||0;
+      o.textContent=`${o.value} (${n})`;
+      o.disabled=n===0&&o.value!==pf;
     });
   }
   /** Splits a `squad-team-filter` value back into {team, game} — plain team
@@ -2035,7 +2062,7 @@ export default class GameScene extends Phaser.Scene {
   // Tournaments (offline knockouts/leagues against the game's real teams)
   // ════════════════════════════════════════════════════════════════════
   /** Flat list of selectable team(+era) options for the tournament entrant
-   *  picker — same grouping _populateTeamFilter uses for the squad editor's
+   *  picker — same grouping _refreshFilterOptions uses for the squad editor's
    *  team dropdown (values in the same 'Team' / 'Team::Game' shape
    *  _parseTeamFilter reads), just flattened instead of built into
    *  <optgroup>s. Deliberately no pooled "All eras" option here, unlike the

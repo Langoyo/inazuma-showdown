@@ -4,6 +4,16 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Linked Browse Players filters
+The Game, Team and Position filters now narrow each other
+(`_refreshFilterOptions`): each dropdown only offers what the other two
+leave, with player counts. Pick a game and the team list shows only that
+game's teams, as plain options since the era is implied. Pick a team and
+the game list shows only its games. Positions with nobody left are
+greyed out. A selection that's still on offer is kept (an era option
+becomes the plain team once its game is picked); clearing a filter with
+its ✕ brings the full lists back.
+
 ## Golden-goal overtime
 A match that's level when the second half runs out no longer ends in a
 draw. It goes to overtime (`_startOvertime`): a break with an "Overtime —
