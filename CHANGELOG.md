@@ -130,6 +130,9 @@ scorers.
   your own backup would double it. So the record with more matches behind
   it wins.
 
+The Career block sits below the saved squads, just above Download /
+Import.
+
 **Tournaments** now also keep your top scorers ("⚽ Your top scorers"
 under the bracket or table). Only your own fixtures count, because the
 others are simulated and have no scorers. Winning a tournament adds a 🏆
