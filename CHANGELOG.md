@@ -29,6 +29,10 @@ on a phone no longer chooses the row under it. The list has a ▾ caret,
 `touch-action: pan-y` and `overscroll-behavior: contain` so it scrolls
 without moving the drawer behind it, and a taller `min(320px, 45vh)` cap.
 
+**Earth icon.** The Earth element is now shown with a mountain (⛰️)
+instead of a ⚡ spark, in the element badges, duel cards and duel text
+(`ELEMENT_ICON`). ⚡ stays for the shot technique and Kick.
+
 ## A gentler AI on Normal
 The smarter AI turned out too sharp on Normal, so how hard the rival
 defends and attacks now scales with difficulty (new `AI_LEVELS` fields):

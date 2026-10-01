@@ -232,7 +232,7 @@ const KEEPER_CHASE_RANGE = 130;
 // much better stat still decides most of them.
 const ELEMENT_BEATS = { Fire:'Wood', Wood:'Air', Air:'Earth', Earth:'Fire' };
 const ELEMENT_EDGE  = 1.15; // power multiplier for the favourable side
-const ELEMENT_ICON  = { Fire:'🔥', Wood:'🌿', Air:'💨', Earth:'⚡' };
+const ELEMENT_ICON  = { Fire:'🔥', Wood:'🌿', Air:'💨', Earth:'⛰️' };
 // Raises each side's relevant stat to this power before the win-chance
 // ratio (see _prepareConfrontReveal) — stat differences on their own used to
 // barely move a duel: a median dribbler against a median defender (the
