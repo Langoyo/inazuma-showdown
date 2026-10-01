@@ -41,6 +41,10 @@ test.describe('story mode', () => {
     await expect(page.locator('#story-hero-btn')).toBeHidden();
     await page.click('#squad-back-btn');
     await page.click('#mode-story-btn');
+    await page.click('[data-story-action="start"][data-run="go2"]');
+    await expect(page.locator('#story-hero-btn')).toHaveText('⭐ Play as Chrono Storm (GO2)');
+    await page.click('#squad-back-btn');
+    await page.click('#mode-story-btn');
     await page.click('[data-story-action="start"][data-run="ie1"]');
     await expect(page.locator('#story-hero-btn')).toHaveText('⭐ Play as Raimon (IE1)');
     await page.click('#story-hero-btn');

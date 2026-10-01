@@ -40,6 +40,7 @@ export const STORY_RUNS = [
       { team: 'Epsilon', note: 'Second Rank' },
       { team: 'Diamond Dust', note: 'Master Rank' },
       { team: 'Prominence', note: 'Master Rank' },
+      { team: 'Chaos', note: 'Prominence and Diamond Dust combined' },
       { team: 'Dark Emperors', note: 'Old friends, Alius stones' },
       { team: 'Genesis', note: 'Alius Academy, the Genesis' },
     ],
@@ -72,10 +73,12 @@ export const STORY_RUNS = [
     ],
   },
   {
-    id: 'go2', game: 'GO2', title: 'Chrono Stone',
+    id: 'go2', game: 'GO2', title: 'Chrono Stone', hero: 'Chrono Storm',
     steps: [
       { team: 'Protocol Omega', note: 'El Dorado strikes' },
-      { team: 'Perfect Cascade', note: 'Protocol Omega, upgraded' },
+      { team: 'Protocol Omega 2.0', note: 'Protocol Omega, upgraded' },
+      { team: 'Protocol Omega 3.0', note: 'Protocol Omega, final form' },
+      { team: 'Perfect Cascade', note: 'El Dorado\'s next squad' },
       { team: 'The Terracotta Army', note: 'Across the ages' },
       { team: "Zanark's Domain", note: 'Ragnarok' },
       { team: 'Zan', note: 'Ragnarok' },

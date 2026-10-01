@@ -107,10 +107,7 @@ test.describe('roster carries the games\' own seven stats', () => {
       };
     });
     expect(spread.distinct).toBeGreaterThan(10);
-    // 94–108 since the full-database import (the widest outliers were
-    // extra cards the database doesn't have); a flat average would collapse
-    // this to a point or two.
-    expect(spread.max - spread.min).toBeGreaterThan(10);
+    expect(spread.max - spread.min).toBeGreaterThan(20);
     // Every position centres on the same number, so the ratings mean the
     // same thing whatever the job.
     for (const m of spread.medians) expect(m).toBe(spread.medians[0]);

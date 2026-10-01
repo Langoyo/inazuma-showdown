@@ -10,6 +10,11 @@ characters), using the new **`scripts/import-characters.mjs`**. It's a dry
 run by default and `--write` applies it. The 12 MB source isn't
 committed.
 
+The database wins wherever it says something. The **previous roster
+fills in where it's silent**, read from git (commit 8626d06), so
+re-running the import always starts from the same two sources. The
+result is 5,269 cards.
+
 - **Same players, same ids.**
   - The database's ids ("mark-evans-1") are unrelated to ours, so each
     current card is matched to its new counterpart by name + game, and by
@@ -29,9 +34,19 @@ committed.
   - 43 teams are renamed, e.g. Royal → Royal Academy, Knights of Queen →
     Queen's Knights, Eito → Prodigy Grammar, Kaiou → Pirates Cove, Genei →
     Mirage, Protocol Cascade → Perfect Cascade, Garu → Gahl.
-  - About 400 players the old spreadsheet had put on small clubs (Inazuma
-    Town, Tokugawa, Ghoul Hangers…) are Unaffiliated in the database.
-  - 166 team-eras can field a full XI.
+  - **409 players the database calls Unaffiliated keep their previous
+    club** (Inazuma Town 39, Nihon 24, Tokugawa 16, Wrong Crowd 15, Ghoul
+    Hangers 14…), under its current name.
+  - **A player counts for every team the database lists them under**
+    (`otherTeams`, from its "Raimon, Inazuma National" field; 265 extra
+    memberships).
+    - Every place that reads a team goes through `_teamsOf` / `_playsFor`:
+      filters, "Select from here", tournament entrants, story rivals and
+      heroes.
+    - That brings back Chaos (IE2), Chrono Storm (GO2), Protocol Omega 2.0
+      and 3.0, Team Zero, Dark Angels and others.
+    - The card itself shows the main team.
+  - 194 team-eras can field a full XI.
   - `src/data/team-renames.json` maps old names to new, so a tournament or
     story saved before the import still finds its teams.
   - `public/teams.json` kit colours were renamed to match. Every card
@@ -46,17 +61,20 @@ committed.
     before: 30/50/60/70/85/100 → power 61/75/82/89/99/110, PT 10/18/21/24/30/35.
   - The strongest per category is the main one.
 - **Removed and merged.**
-  - 182 old cards have no counterpart: 175 Victory Road extras and a
-    handful of others. Where the same character survives elsewhere, the old
-    id becomes an alias.
+  - **182 previous cards with no counterpart are kept as they were**:
+    175 Victory Road extras and a handful of others. Their techniques are
+    on the old scale, which goes down to power 55.
   - 42 identical entries in the database merged into one card each. The
     same character listed with *different* stats (Fei Rune, GO2) stays as
     two cards.
-- **Story runs** use the new team names. IE2's "Chaos" step is gone (no
-  such team in the database). GO1 plays as Raimon First Squad, and GO3 can
-  now play as Earth Eleven, adding Naiadi and Magmavia Eleven. IE2 lost its
-  "Play as Raimon" option, since the database has only one IE2 Raimon
-  player.
+- **Story runs** use the new team names.
+  - IE2 keeps Chaos.
+  - GO2 adds Protocol Omega 2.0 and 3.0 and can play as Chrono Storm.
+  - GO1 plays as Raimon First Squad.
+  - GO3 can play as Earth Eleven, adding Naiadi and Magmavia Eleven.
+  - IE2 has no "Play as Raimon" any more. The previous roster's IE2
+    Raimon players were recruits, and the database gives their home clubs
+    (Shawn Froste → Alpine).
 
 ## Story mode: each game's run, rival by rival
 A new **📖 Story** mode plays one game's canonical run in order, against

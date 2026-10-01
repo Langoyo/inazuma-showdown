@@ -11,13 +11,20 @@
 // players. Everything else — team, stats, element, techniques — comes from
 // the new file, which is the source of truth.
 //
-//   node scripts/import-characters.mjs <path-to-inazuma_characters.js> [--write]
+// It mixes in the previous roster where the database is silent: a player the
+// database calls Unaffiliated keeps the club the previous roster gave them,
+// and a previous card with no counterpart in the database is kept as it was.
+// The previous roster is read from git (the last commit before the first
+// import), so re-running this always starts from the same two sources.
+//
+//   node scripts/import-characters.mjs <path-to-inazuma_characters.js> [--previous <roster.json>] [--write]
 //
 // Without --write it reports what it would do and changes nothing. With it,
 // it writes public/roster.json, renames public/teams.json keys along team
 // renames, and writes src/data/team-renames.json (old → new team names, so
 // state saved before the import still finds its teams).
 
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,8 +50,12 @@ const mod = await import(pathToFileURL(tmp).href);
 const chars = mod.c;
 if (!Array.isArray(chars) || !chars.length) throw new Error('no characters found (expected an array as the `c` export)');
 
-const old = JSON.parse(fs.readFileSync(ROSTER, 'utf8'));
-const teams = JSON.parse(fs.readFileSync(TEAMS, 'utf8'));
+// The roster and kit colours as they were before the first import.
+const PREVIOUS_COMMIT = '8626d06';
+const prevArg = process.argv.indexOf('--previous');
+const fromGit = (file) => JSON.parse(execSync(`git show ${PREVIOUS_COMMIT}:${file}`, { cwd: ROOT, maxBuffer: 64 << 20 }).toString());
+const old = prevArg > 0 ? JSON.parse(fs.readFileSync(process.argv[prevArg + 1], 'utf8')) : fromGit('public/roster.json');
+const teams = fromGit('public/teams.json');
 
 // ---- mapping tables ----------------------------------------------------------
 const GAME = { ie1: 'IE1', ie2: 'IE2', ie3: 'IE3', go1: 'GO1', go2: 'GO2', go3: 'GO3', ares: 'Ares', vr: 'VR' };
@@ -141,7 +152,7 @@ function pick(p, cands) {
     || free.find((e) => sameStats(p, e))
     || free[0] || null;
 }
-const matched = [], moved = [], dropped = [];
+const matched = [], moved = [], kept = [];
 for (const p of old) {
   const e = pick(p, byKey.get(key(p.name, p.game)) || []);
   if (e) { e.claimed = p; matched.push([p, e]); }
@@ -152,16 +163,19 @@ for (const p of old) {
   const e = pick(p, byName.get(p.name.toLowerCase()) || []);
   if (e) { e.claimed = p; matched.push([p, e]); matchedOld.add(p); moved.push(`${p.name}: ${p.game} → ${e.game}`); }
 }
+// Previous cards with no counterpart are kept as they were (their team is
+// renamed below, with everyone else's).
 for (const p of old) {
   if (matchedOld.has(p)) continue;
-  // Nothing left to take over: the card goes, but a saved squad that named
-  // it resolves to the same character elsewhere when there is one.
-  const host = (byKey.get(key(p.name, p.game)) || byName.get(p.name.toLowerCase()) || [])[0];
-  if (host) host.extraAliases = [...(host.extraAliases || []), p.id, ...(p.aliases || [])];
-  dropped.push(`${p.id} ${p.name} [${p.game}, ${p.team}]${host ? ` → alias of ${host.claimed?.id || host.out.id}` : ' (no namesake left)'}`);
+  const { aliases, ...card } = p;
+  card.techniques = { shot: null, dribble: null, defense: null, keeper: null, ...(card.techniques || {}) };
+  card.techniquesExtra = card.techniquesExtra || [];
+  entries.push({ src: null, game: p.game, out: { ...card, ...(aliases?.length ? { aliases } : {}) }, claimed: p, kept: true });
+  kept.push(`${p.id} ${p.name} [${p.game}, ${p.team}]`);
 }
 
 for (const e of entries) {
+  if (e.kept) continue;
   const p = e.claimed;
   if (p) {
     e.out.id = p.id;
@@ -171,13 +185,13 @@ for (const e of entries) {
     e.out.maxSP = inRange(SP_RANGE, hash(e.out.id));
     e.out.maxStamina = inRange(STA_RANGE, hash(`${e.out.id}:stamina`));
   }
-  if (!e.out.image && e.src.imageUrl) e.out.image = e.src.imageUrl;
+  if (!e.out.image && e.src?.imageUrl) e.out.image = e.src.imageUrl;
   const aliases = [...new Set([...(p?.aliases || []), ...(e.extraAliases || [])])].filter((a) => a !== e.out.id);
   if (aliases.length) e.out.aliases = aliases;
 }
 
 // ---- team renames (for kit colours and saved state) --------------------------
-const newTeams = new Set(entries.map((e) => e.out.team));
+const newTeams = new Set(entries.filter((e) => !e.kept).map((e) => e.out.team));
 const flows = new Map();
 for (const [p, e] of matched) {
   if (NOT_A_TEAM.has(p.team)) continue;
@@ -190,6 +204,26 @@ for (const [from, f] of flows) {
   const total = [...f.values()].reduce((a, b) => a + b, 0);
   const [to, n] = [...f].sort((a, b) => b[1] - a[1])[0];
   if (!NOT_A_TEAM.has(to) && n / total >= 0.6) renames[from] = to;
+}
+// Where the database has no club for a player, the previous roster's (under
+// its current name) fills in; kept cards get their team's current name.
+const filled = new Map();
+for (const e of entries) {
+  const p = e.claimed;
+  if (e.kept) { e.out.team = renames[e.out.team] || e.out.team; continue; }
+  if (p && NOT_A_TEAM.has(e.out.team) && !NOT_A_TEAM.has(p.team)) {
+    e.out.team = renames[p.team] || p.team;
+    filled.set(`${e.out.team} (${e.out.game})`, (filled.get(`${e.out.team} (${e.out.game})`) || 0) + 1);
+  }
+}
+// Other teams the database lists a character under ("Raimon, Inazuma
+// National"): they count for those too, in filters, tournaments and stories.
+let memberships = 0;
+for (const e of entries) {
+  if (!e.src?.teams) continue;
+  const others = [...new Set(decode(e.src.teams).split(',').map((t) => t.trim()))]
+    .filter((t) => t && t !== e.out.team && !NOT_A_TEAM.has(t));
+  if (others.length) { e.out.otherTeams = others; memberships += others.length; }
 }
 const teamsOut = { ...teams };
 for (const [from, to] of Object.entries(renames)) {
@@ -256,12 +290,14 @@ for (const p of out) { if (ids.has(p.id)) throw new Error(`duplicate id ${p.id}`
 // ---- report ----------------------------------------------------------------------
 const roles = out.reduce((m, p) => (m[p.role || 'player'] = (m[p.role || 'player'] || 0) + 1, m), {});
 const viable = new Map();
-for (const p of out) if (!NOT_A_TEAM.has(p.team)) viable.set(`${p.team}|${p.game}`, (viable.get(`${p.team}|${p.game}`) || 0) + 1);
+for (const p of out) for (const t of [p.team, ...(p.otherTeams || [])]) if (!NOT_A_TEAM.has(t)) viable.set(`${t}|${p.game}`, (viable.get(`${t}|${p.game}`) || 0) + 1);
 console.log(`source characters : ${chars.length}`);
-console.log(`current roster    : ${old.length}`);
+console.log(`previous roster   : ${old.length}`);
 console.log(`matched           : ${matched.length} (${moved.length} under another game)`);
 console.log(`new characters    : ${entries.filter((e) => !e.claimed).length}`);
-console.log(`dropped           : ${dropped.length}`);
+console.log(`kept from previous: ${kept.length} (no counterpart in the database)`);
+console.log(`clubs filled in   : ${[...filled.values()].reduce((a, b) => a + b, 0)} (database says Unaffiliated)`);
+console.log(`extra memberships : ${memberships}`);
 console.log(`merged duplicates : ${merges.length} (${drop.size} removed)`);
 console.log(`roster            : ${out.length} (${Object.entries(roles).map(([k, v]) => `${v} ${k}`).join(', ')})`);
 console.log(`pixel portraits   : ${out.filter((p) => p.image?.startsWith('/')).length}, official art: ${out.filter((p) => p.image?.startsWith('http')).length}`);
@@ -269,7 +305,8 @@ console.log(`team renames      : ${Object.keys(renames).length}`);
 Object.entries(renames).forEach(([a, b]) => console.log(`  ${a} → ${b}`));
 console.log(`team-eras with 11 : ${[...viable.values()].filter((n) => n >= 11).length}`);
 if (moved.length) { console.log('moved game:'); moved.forEach((m) => console.log('  ' + m)); }
-if (dropped.length) { console.log('dropped:'); dropped.forEach((d) => console.log('  ' + d)); }
+if (kept.length) { console.log('kept from previous:'); kept.forEach((d) => console.log('  ' + d)); }
+if (filled.size) { console.log('clubs filled in:'); [...filled].sort((a, b) => b[1] - a[1]).forEach(([t, n]) => console.log(`  ${t}: ${n}`)); }
 if (merges.length) { console.log('merged:'); merges.forEach((m) => console.log('  ' + m)); }
 
 if (!write) {

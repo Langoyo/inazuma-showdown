@@ -1938,7 +1938,7 @@ export default class GameScene extends Phaser.Scene {
 
     // Games: narrowed by team (and its era) and position.
     const gameCounts=new Map();
-    for(const p of roster) if((!tfTeam||p.team===tfTeam)&&(!tfGame||p.game===tfGame)&&(!pf||p.position===pf)) gameCounts.set(p.game,(gameCounts.get(p.game)||0)+1);
+    for(const p of roster) if((!tfTeam||this._playsFor(p,tfTeam))&&(!tfGame||p.game===tfGame)&&(!pf||p.position===pf)) gameCounts.set(p.game,(gameCounts.get(p.game)||0)+1);
     gs.innerHTML=''; opt(gs,'','All games');
     [...gameCounts.keys()].sort(byGameOrder).forEach(g=>opt(gs,g,`${g} (${gameCounts.get(g)})`));
     gs.value=gameCounts.has(gf)?gf:'';
@@ -1948,9 +1948,11 @@ export default class GameScene extends Phaser.Scene {
     // implied, so each team is one plain option.
     const byTeam=new Map();
     for(const p of roster){
-      if(!p.team||(game&&p.game!==game)||(pf&&p.position!==pf)) continue;
-      if(!byTeam.has(p.team)) byTeam.set(p.team,new Map());
-      const gm=byTeam.get(p.team); gm.set(p.game,(gm.get(p.game)||0)+1);
+      if((game&&p.game!==game)||(pf&&p.position!==pf)) continue;
+      for(const t of this._teamsOf(p)){
+        if(!byTeam.has(t)) byTeam.set(t,new Map());
+        const gm=byTeam.get(t); gm.set(p.game,(gm.get(p.game)||0)+1);
+      }
     }
     ts.innerHTML=''; opt(ts,'','All teams');
     const values=new Set();
@@ -1971,7 +1973,7 @@ export default class GameScene extends Phaser.Scene {
     // Positions: narrowed by game and team.
     const {team:t2,game:g2}=this._parseTeamFilter(ts.value);
     const posCounts={};
-    for(const p of roster) if((!game||p.game===game)&&(!t2||p.team===t2)&&(!g2||p.game===g2)) posCounts[p.position]=(posCounts[p.position]||0)+1;
+    for(const p of roster) if((!game||p.game===game)&&(!t2||this._playsFor(p,t2))&&(!g2||p.game===g2)) posCounts[p.position]=(posCounts[p.position]||0)+1;
     [...ps.options].forEach(o=>{
       if(!o.value) return;
       const n=posCounts[o.value]||0;
@@ -2077,6 +2079,12 @@ export default class GameScene extends Phaser.Scene {
   }
   /** Splits a `squad-team-filter` value back into {team, game} — plain team
    *  filters (single-game teams, or the "All eras" option) have no game. */
+  /** Every team a player counts for: their own, plus any other the
+   *  database lists them under ("Raimon, Inazuma National" — see
+   *  scripts/import-characters.mjs). Filters, tournaments and stories all go
+   *  through these two, so a player shows up for each of their teams. */
+  _teamsOf(p){ return p.team?[p.team,...(p.otherTeams||[])]:(p.otherTeams||[]); }
+  _playsFor(p,team){ return p.team===team||!!p.otherTeams?.includes(team); }
   _parseTeamFilter(tf){
     if(!tf) return {team:null,game:null};
     const i=tf.indexOf('::');
@@ -2115,7 +2123,7 @@ export default class GameScene extends Phaser.Scene {
     const scopePos=this._pickPosFilter;
     const userPos=document.getElementById('squad-position-filter').value;
     const pos=scopePos||userPos;
-    const matches=this.rosterAll.filter(p=>(!pos||p.position===pos)&&(!gf||p.game===gf)&&(!tfTeam||p.team===tfTeam)&&(!tfGame||p.game===tfGame)&&(!q||p.name.toLowerCase().includes(q)||(p.nickname||'').toLowerCase().includes(q)));
+    const matches=this.rosterAll.filter(p=>(!pos||p.position===pos)&&(!gf||p.game===gf)&&(!tfTeam||this._playsFor(p,tfTeam))&&(!tfGame||p.game===tfGame)&&(!q||p.name.toLowerCase().includes(q)||(p.nickname||'').toLowerCase().includes(q)));
     // Say which spot the list is narrowed for, with the way out of it — the
     // narrowing is invisible otherwise, and a roster of ~5000 suddenly
     // showing a few hundred reads as a bug rather than as help.
@@ -2172,7 +2180,7 @@ export default class GameScene extends Phaser.Scene {
     const gf=document.getElementById('squad-game-filter').value;
     const {team:tfTeam,game:tfGame}=this._parseTeamFilter(document.getElementById('squad-team-filter').value);
     if(!gf&&!tfTeam) return;
-    this._fillSquadByPosition(this.rosterAll.filter(p=>(!tfTeam||p.team===tfTeam)&&(!tfGame||p.game===tfGame)&&(!gf||p.game===gf)));
+    this._fillSquadByPosition(this.rosterAll.filter(p=>(!tfTeam||this._playsFor(p,tfTeam))&&(!tfGame||p.game===tfGame)&&(!gf||p.game===gf)));
     this._squadSel=null; this._pickPosFilter=null;
     this._renderPitch(); this._renderPickList();
   }
@@ -2282,10 +2290,11 @@ export default class GameScene extends Phaser.Scene {
     const gameOrder=getGames();
     const byTeam=new Map();
     this.rosterAll.forEach(p=>{
-      if(!p.team) return;
-      if(!byTeam.has(p.team)) byTeam.set(p.team,new Map());
-      const gm=byTeam.get(p.team);
-      gm.set(p.game,(gm.get(p.game)||0)+1);
+      for(const t of this._teamsOf(p)){
+        if(!byTeam.has(t)) byTeam.set(t,new Map());
+        const gm=byTeam.get(t);
+        gm.set(p.game,(gm.get(p.game)||0)+1);
+      }
     });
     const options=[];
     [...byTeam.keys()].sort((a,b)=>a.localeCompare(b)).forEach(team=>{
@@ -2307,7 +2316,7 @@ export default class GameScene extends Phaser.Scene {
   }
   _entrantPool(entrantId){
     const {team,game}=this._parseTeamFilter(entrantId);
-    return this.rosterAll.filter(p=>p.team===team&&(!game||p.game===game));
+    return this.rosterAll.filter(p=>this._playsFor(p,team)&&(!game||p.game===game));
   }
   /** Average player rating for a side — used only to weight the instant
    *  simulation of matches that don't involve the player (see

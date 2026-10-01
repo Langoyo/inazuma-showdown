@@ -23,11 +23,12 @@ test.describe('imported roster', () => {
     expect(axel.techniques.shot).toMatchObject({ name: 'Inazuma-1 Drop', power: 99, cost: 30 });
   });
 
+  // 61–110 from the database; cards kept from the previous roster go down to 55.
   test('every technique sits on the game scale, in one of the four categories', () => {
     const bad = [];
     for (const p of roster) {
-      for (const [cat, t] of Object.entries(p.techniques)) if (t && !(t.power >= 61 && t.power <= 110 && t.cost >= 10 && t.cost <= 35)) bad.push(`${p.id} ${cat} ${t.name}`);
-      for (const t of p.techniquesExtra) if (!['shot', 'dribble', 'defense', 'keeper'].includes(t.category) || !(t.power >= 61 && t.power <= 110)) bad.push(`${p.id} ${t.name}`);
+      for (const [cat, t] of Object.entries(p.techniques)) if (t && !(t.power >= 55 && t.power <= 110 && t.cost >= 10 && t.cost <= 35)) bad.push(`${p.id} ${cat} ${t.name}`);
+      for (const t of p.techniquesExtra) if (!['shot', 'dribble', 'defense', 'keeper'].includes(t.category) || !(t.power >= 55 && t.power <= 110)) bad.push(`${p.id} ${t.name}`);
     }
     expect(bad).toEqual([]);
   });
@@ -61,6 +62,33 @@ test.describe('imported roster', () => {
     expect(r.slots).toEqual(['vr-1', 'vr-2', 'vr-3479']);
     expect(r.royal).toBeGreaterThanOrEqual(11);
     expect(r.label).toBe('Royal Academy (IE1)');
+  });
+
+  test('the previous roster fills the gaps: kept cards and clubs the database leaves blank', () => {
+    // A card the database doesn't have is kept as it was.
+    expect(byId('vr-5332')).toMatchObject({ name: 'Eldon Compayne', game: 'VR', team: 'Rugby Club' });
+    expect(byId('vr-5332').image).toMatch(/^\/player_images\//);
+    // A player the database calls Unaffiliated keeps the old club.
+    expect(roster.filter((p) => p.team === 'Inazuma Town' && p.game === 'IE1').length).toBeGreaterThan(30);
+    // An old club that was renamed comes back under its new name.
+    expect(roster.some((p) => p.team === 'Royal')).toBe(false);
+  });
+
+  test('players count for every team the database lists them under', async ({ page }) => {
+    expect(byId('vr-2').otherTeams).toEqual(['Inazuma National']);
+    await waitForRosterLoaded(page);
+    const pools = await page.evaluate(() => {
+      const s = window.__scene;
+      return ['Chaos::IE2', 'Chrono Storm::GO2', 'Protocol Omega 2.0::GO2', 'Protocol Omega 3.0::GO2'].map((e) => s._entrantPool(e).length);
+    });
+    for (const n of pools) expect(n).toBeGreaterThanOrEqual(10);
+    // The Team filter offers Chaos for IE2, and picking it lists those players.
+    await page.click('button[data-view="players"]');
+    await page.evaluate(() => { const g = document.getElementById('squad-game-filter'); g.value = 'IE2'; g.dispatchEvent(new Event('change')); });
+    const values = await page.evaluate(() => [...document.getElementById('squad-team-filter').options].map((o) => o.value));
+    expect(values).toContain('Chaos');
+    await page.evaluate(() => { const t = document.getElementById('squad-team-filter'); t.value = 'Chaos'; t.dispatchEvent(new Event('change')); });
+    await expect(page.locator('#pick-count')).toHaveText('11 players');
   });
 
   test('a coach card shows its role tag', async ({ page }) => {

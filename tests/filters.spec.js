@@ -23,11 +23,11 @@ test.describe('linked Browse Players filters', () => {
     await openBrowse(page);
     const { game, otherOnly } = await page.evaluate(() => {
       const r = window.__scene.rosterAll;
-      const teamsIn = (g) => new Set(r.filter((p) => p.game === g && p.team).map((p) => p.team));
+      const teamsIn = (g) => new Set(r.filter((p) => p.game === g).flatMap((p) => window.__scene._teamsOf(p)));
       const games = [...new Set(r.map((p) => p.game))];
       for (const g of games) {
         const mine = teamsIn(g);
-        const other = [...new Set(r.filter((p) => p.game !== g && p.team).map((p) => p.team))].find((t) => !mine.has(t));
+        const other = [...new Set(r.filter((p) => p.game !== g).flatMap((p) => window.__scene._teamsOf(p)))].find((t) => !mine.has(t));
         if (other) return { game: g, otherOnly: other };
       }
       return {};
@@ -35,7 +35,7 @@ test.describe('linked Browse Players filters', () => {
     await choose(page, '#squad-game-filter', game);
 
     const teams = await optionValues(page, 'squad-team-filter');
-    const validArr = await page.evaluate((g) => [...new Set(window.__scene.rosterAll.filter((p) => p.game === g && p.team).map((p) => p.team))], game);
+    const validArr = await page.evaluate((g) => [...new Set(window.__scene.rosterAll.filter((p) => p.game === g).flatMap((p) => window.__scene._teamsOf(p)))], game);
     expect(teams.length).toBe(validArr.length);
     expect(teams.every((t) => validArr.includes(t))).toBe(true);
     expect(teams).not.toContain(otherOnly);
@@ -47,7 +47,7 @@ test.describe('linked Browse Players filters', () => {
     await openBrowse(page);
     const { team, games } = await page.evaluate(() => {
       const r = window.__scene.rosterAll, byTeam = new Map();
-      r.forEach((p) => { if (p.team) (byTeam.get(p.team) || byTeam.set(p.team, new Set()).get(p.team)).add(p.game); });
+      r.forEach((p) => window.__scene._teamsOf(p).forEach((t) => (byTeam.get(t) || byTeam.set(t, new Set()).get(t)).add(p.game)));
       const [team, gs] = [...byTeam.entries()].find(([, gs]) => gs.size >= 2);
       return { team, games: [...gs] };
     });
@@ -60,7 +60,7 @@ test.describe('linked Browse Players filters', () => {
     await openBrowse(page);
     const s = await page.evaluate(() => {
       const r = window.__scene.rosterAll, byTeam = new Map();
-      r.forEach((p) => { if (p.team) (byTeam.get(p.team) || byTeam.set(p.team, new Set()).get(p.team)).add(p.game); });
+      r.forEach((p) => window.__scene._teamsOf(p).forEach((t) => (byTeam.get(t) || byTeam.set(t, new Set()).get(t)).add(p.game)));
       const [team, gs] = [...byTeam.entries()].find(([, gs]) => gs.size >= 2);
       return { team, g1: [...gs][0] };
     });
@@ -75,7 +75,7 @@ test.describe('linked Browse Players filters', () => {
     await openBrowse(page);
     const r = await page.evaluate(() => {
       const s = window.__scene, roster = s.rosterAll, byTeam = new Map();
-      roster.forEach((p) => { if (p.team) (byTeam.get(p.team) || byTeam.set(p.team, new Set()).get(p.team)).add(p.game); });
+      roster.forEach((p) => window.__scene._teamsOf(p).forEach((t) => (byTeam.get(t) || byTeam.set(t, new Set()).get(t)).add(p.game)));
       const games = [...new Set(roster.map((p) => p.game))];
       const [team, gs] = [...byTeam.entries()].find(([, gs]) => games.some((g) => !gs.has(g)));
       const absent = games.find((g) => !gs.has(g));
@@ -98,7 +98,7 @@ test.describe('linked Browse Players filters', () => {
     await openBrowse(page);
     const t = await page.evaluate(() => {
       const r = window.__scene.rosterAll, byTeam = new Map();
-      r.forEach((p) => { if (p.team) { const m = byTeam.get(p.team) || byTeam.set(p.team, {}).get(p.team); m[p.position] = (m[p.position] || 0) + 1; } });
+      r.forEach((p) => window.__scene._teamsOf(p).forEach((t) => { const m = byTeam.get(t) || byTeam.set(t, {}).get(t); m[p.position] = (m[p.position] || 0) + 1; }));
       // Prefer a small team missing at least one position.
       const pick = [...byTeam.entries()].find(([, m]) => ['GK', 'DF', 'MF', 'FW'].some((k) => !m[k])) || [...byTeam.entries()][0];
       return { team: pick[0], counts: pick[1] };
@@ -127,7 +127,7 @@ test.describe('linked Browse Players filters', () => {
     await openBrowse(page);
     const team = await page.evaluate(() => {
       const counts = new Map();
-      window.__scene.rosterAll.forEach((p) => { if (p.team) counts.set(p.team, (counts.get(p.team) || 0) + 1); });
+      window.__scene.rosterAll.forEach((p) => window.__scene._teamsOf(p).forEach((t) => counts.set(t, (counts.get(t) || 0) + 1)));
       return [...counts.keys()].find((t) => t.length >= 5);
     });
     const typed = team.slice(0, 4).toLowerCase();
@@ -145,7 +145,7 @@ test.describe('linked Browse Players filters', () => {
     expect(await page.inputValue('#squad-team-filter')).toBe(team);
     await expect(page.locator('#squad-team-filter-list')).toBeHidden();
     const allMatch = await page.evaluate((team) => {
-      const want = window.__scene.rosterAll.filter((p) => p.team === team).length;
+      const want = window.__scene.rosterAll.filter((p) => window.__scene._playsFor(p, team)).length;
       return document.getElementById('pick-count').textContent === `${want} players`;
     }, team);
     expect(allMatch).toBe(true);
@@ -155,7 +155,7 @@ test.describe('linked Browse Players filters', () => {
     await openBrowse(page);
     const era = await page.evaluate(() => {
       const byTeam = new Map();
-      window.__scene.rosterAll.forEach((p) => { if (p.team) (byTeam.get(p.team) || byTeam.set(p.team, new Set()).get(p.team)).add(p.game); });
+      window.__scene.rosterAll.forEach((p) => window.__scene._teamsOf(p).forEach((t) => (byTeam.get(t) || byTeam.set(t, new Set()).get(t)).add(p.game)));
       return [...[...byTeam.values()].find((g) => g.size >= 2)][1];
     });
     await page.click('#squad-team-filter-input');
@@ -169,7 +169,7 @@ test.describe('linked Browse Players filters', () => {
     await openBrowse(page);
     const team = await page.evaluate(() => {
       const counts = new Map();
-      window.__scene.rosterAll.forEach((p) => { if (p.team) counts.set(p.team, (counts.get(p.team) || 0) + 1); });
+      window.__scene.rosterAll.forEach((p) => window.__scene._teamsOf(p).forEach((t) => counts.set(t, (counts.get(t) || 0) + 1)));
       const names = [...counts.keys()];
       return names[Math.floor(names.length * 0.7)];
     });
@@ -231,7 +231,7 @@ test.describe('linked Browse Players filters', () => {
     await openBrowse(page);
     const { team, games } = await page.evaluate(() => {
       const byTeam = new Map();
-      window.__scene.rosterAll.forEach((p) => { if (p.team) (byTeam.get(p.team) || byTeam.set(p.team, new Set()).get(p.team)).add(p.game); });
+      window.__scene.rosterAll.forEach((p) => window.__scene._teamsOf(p).forEach((t) => (byTeam.get(t) || byTeam.set(t, new Set()).get(t)).add(p.game)));
       const [team, g] = [...byTeam.entries()].find(([, g]) => g.size >= 2);
       return { team, games: [...g] };
     });
