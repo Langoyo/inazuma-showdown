@@ -57,14 +57,14 @@ test.describe('story mode', () => {
     await page.click('[data-story-action="start"][data-run="ie1"]');
     await page.click('#pitch-randomize-btn');
     await page.click('#confirm-squad-btn');
-    await expect(page.locator('.story-step.current')).toContainText('Royal');
+    await expect(page.locator('.story-step.current')).toContainText('Royal Academy');
 
     await page.click('[data-story-action="play"]');
     await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
-    await expect(page.locator('#score-name-b')).toHaveText('Royal');
+    await expect(page.locator('#score-name-b')).toHaveText('Royal Academy');
     await finish(page, 0, 1);
-    await expect(page.locator('.story-step.current')).toContainText('Royal');
-    await expect(page.locator('[data-story-action="play"]')).toHaveText('Try again: vs Royal');
+    await expect(page.locator('.story-step.current')).toContainText('Royal Academy');
+    await expect(page.locator('[data-story-action="play"]')).toHaveText('Try again: vs Royal Academy');
 
     await page.click('[data-story-action="play"]');
     await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });

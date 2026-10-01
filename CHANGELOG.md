@@ -4,6 +4,60 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## New character database: full teams, stats and supertechniques
+The roster is rebuilt from the complete character database (5,130
+characters), using the new **`scripts/import-characters.mjs`**. It's a dry
+run by default and `--write` applies it. The 12 MB source isn't
+committed.
+
+- **Same players, same ids.**
+  - The database's ids ("mark-evans-1") are unrelated to ours, so each
+    current card is matched to its new counterpart by name + game, and by
+    name alone for the 9 characters the database puts under another game
+    (e.g. Nathan Swift, GO1 → GO2).
+  - 4,936 cards keep their id, pixel portrait and PT/stamina, so saved
+    squads, tournaments and stories still point at the same players.
+  - Stats were already the database's level-50 numbers.
+- **What's new.**
+  - 194 characters, including **98 coaches and 44 managers**, who are now
+    pickable with a COACH / MANAGER tag on their card.
+  - New characters show the database's official art, with their initials
+    layered underneath in case that server can't be reached.
+  - PT and stamina have no relation to stats, so a new character gets a
+    stable value from its id, within the roster's existing range.
+- **Teams follow the database.**
+  - 43 teams are renamed, e.g. Royal → Royal Academy, Knights of Queen →
+    Queen's Knights, Eito → Prodigy Grammar, Kaiou → Pirates Cove, Genei →
+    Mirage, Protocol Cascade → Perfect Cascade, Garu → Gahl.
+  - About 400 players the old spreadsheet had put on small clubs (Inazuma
+    Town, Tokugawa, Ghoul Hangers…) are Unaffiliated in the database.
+  - 166 team-eras can field a full XI.
+  - `src/data/team-renames.json` maps old names to new, so a tournament or
+    story saved before the import still finds its teams.
+  - `public/teams.json` kit colours were renamed to match. Every card
+    still gets a team colour: the kit if the team has one, else its old
+    colour, else the one most of its players had before, else one
+    generated from the name.
+- **Supertechniques are the database's full lists**, both learning
+  branches included: shot, dribble, defense and keeper.
+  - Awakenings, keshin, mix-max, totems and modes have no confrontation
+    here and are left out.
+  - Source power maps onto the game's scale with the same table as
+    before: 30/50/60/70/85/100 → power 61/75/82/89/99/110, PT 10/18/21/24/30/35.
+  - The strongest per category is the main one.
+- **Removed and merged.**
+  - 182 old cards have no counterpart: 175 Victory Road extras and a
+    handful of others. Where the same character survives elsewhere, the old
+    id becomes an alias.
+  - 42 identical entries in the database merged into one card each. The
+    same character listed with *different* stats (Fei Rune, GO2) stays as
+    two cards.
+- **Story runs** use the new team names. IE2's "Chaos" step is gone (no
+  such team in the database). GO1 plays as Raimon First Squad, and GO3 can
+  now play as Earth Eleven, adding Naiadi and Magmavia Eleven. IE2 lost its
+  "Play as Raimon" option, since the database has only one IE2 Raimon
+  player.
+
 ## Story mode: each game's run, rival by rival
 A new **📖 Story** mode plays one game's canonical run in order, against
 the real teams. The runs live in `src/data/story.js` (`STORY_RUNS`):

@@ -7,11 +7,13 @@ const roster = JSON.parse(fs.readFileSync(new URL('../public/roster.json', impor
 const CATS = ['shot', 'dribble', 'defense', 'keeper'];
 
 test.describe('roster duplicates', () => {
-  test('no two cards share name, game, team and position', () => {
+  // The source lists a few characters twice with different numbers (Fei
+  // Rune, GO2) — those are two cards on purpose; identical ones are not.
+  test('no two cards share name, game, team, position and stats', () => {
     const seen = new Map();
     const clashes = [];
     for (const p of roster) {
-      const key = [p.name, p.game, p.team, p.position].join('|');
+      const key = [p.name, p.game, p.team, p.position, JSON.stringify(p.stats)].join('|');
       if (seen.has(key)) clashes.push(`${key}: ${seen.get(key)} / ${p.id}`);
       else seen.set(key, p.id);
     }

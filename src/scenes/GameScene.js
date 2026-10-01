@@ -5,6 +5,9 @@ import { createPlayerStats, applyRosterPlayerToStats, canActivate, techniquesFor
 import { loadRoster, getPlayerById, getGames } from '../data/roster.js';
 import { decideAIMove } from '../ai/AIController.js';
 import { makeSeededKnockout, makeLeague, recordKnockoutResult, recordLeagueResult, leagueStandings, advanceAuto, saveTournament, loadTournament, clearTournament } from '../data/tournament.js';
+// Old team name → current one (from scripts/import-characters.mjs), for
+// tournaments and stories saved before a roster import renamed teams.
+import TEAM_RENAMES from '../data/team-renames.json';
 import { STORY_RUNS, STORY_MIN_PLAYERS, getStoryRun, startStory, recordStoryResult, saveStory, loadStory, clearStory } from '../data/story.js';
 import { playKick, playPass, playGoal, playWhistle, playGkSave, isSfxEnabled, setSfxEnabled } from '../audio/sfx.js';
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -976,6 +979,16 @@ export default class GameScene extends Phaser.Scene {
    *  lives in one place, so a future format for a chip doesn't have to
    *  re-derive "image or colour+initials" on its own. */
   _avatarFill(p,col){
+    if(p?.image?.startsWith('http')){
+      // Official art comes from another server, which could be unreachable
+      // (offline, blocked): the initials sit on a layer underneath, so a
+      // failed load still leaves a readable chip instead of a blank one.
+      const ini=this._initials(p).replace(/[^A-Z0-9]/g,'');
+      const svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="${col}"/><text x="16" y="21" font-family="monospace" font-size="12" font-weight="bold" text-anchor="middle" fill="white">${ini}</text></svg>`;
+      // Single-quoted urls and a fully encoded SVG: this string ends up
+      // inside double-quoted style="…" attributes.
+      return {style:`background-image:url('${encodeURI(p.image).replace(/'/g,'%27')}'),url('data:image/svg+xml,${encodeURIComponent(svg).replace(/'/g,'%27')}');background-size:cover;background-position:center;`,inner:''};
+    }
     if(p?.image) return {style:`background-image:url('${p.image}');background-size:cover;background-position:center;`,inner:''};
     return {style:`background:${col};`,inner:p?this._initials(p):'?'};
   }
@@ -2067,7 +2080,8 @@ export default class GameScene extends Phaser.Scene {
   _parseTeamFilter(tf){
     if(!tf) return {team:null,game:null};
     const i=tf.indexOf('::');
-    return i===-1?{team:tf,game:null}:{team:tf.slice(0,i),game:tf.slice(i+2)};
+    const team=i===-1?tf:tf.slice(0,i);
+    return {team:TEAM_RENAMES[team]||team,game:i===-1?null:tf.slice(i+2)};
   }
 
   /** Sort comparators for the search list — stats sort strongest-first, name
@@ -2124,7 +2138,7 @@ export default class GameScene extends Phaser.Scene {
       card.className='pick-card'+(inSquad.has(p.id)?' in-squad':'')+(isSel?' selected':'');
       const col=this._css3(this._rosterColor(p));
       const av=this._avatarFill(p,col);
-      card.innerHTML=`<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;"><span class="av" style="width:32px;height:32px;font-size:10px;${av.style}flex-shrink:0">${av.inner}</span>${this._posBadge(p.position)}<span class="pick-name">${p.nickname||p.name}</span><span style="margin-left:auto;font-size:10px;font-weight:bold;color:#ffd966;">${this._playerRating(p)}</span></div><div style="font-size:10px;opacity:.7">${this._elBadge(p.element,false)} ${this._teamLine(p)}</div><div style="font-size:10px;opacity:.6">${this._cardStatLine(p)}</div>`;
+      card.innerHTML=`<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;"><span class="av" style="width:32px;height:32px;font-size:10px;${av.style}flex-shrink:0">${av.inner}</span>${this._posBadge(p.position)}<span class="pick-name">${p.nickname||p.name}</span><span style="margin-left:auto;font-size:10px;font-weight:bold;color:#ffd966;">${this._playerRating(p)}</span></div><div style="font-size:10px;opacity:.7">${p.role?`<span class="role-tag">${p.role==='coach'?'Coach':'Manager'}</span> `:''}${this._elBadge(p.element,false)} ${this._teamLine(p)}</div><div style="font-size:10px;opacity:.6">${this._cardStatLine(p)}</div>`;
       // A list card is, for selection purposes, exactly the pin it maps to
       // (pitch slot / bench / pool) — tap to select/place, press and hold
       // to see its full stats.
