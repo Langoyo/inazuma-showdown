@@ -5,6 +5,7 @@ import { createPlayerStats, applyRosterPlayerToStats, canActivate, techniquesFor
 import { loadRoster, getPlayerById, getGames } from '../data/roster.js';
 import { decideAIMove } from '../ai/AIController.js';
 import { makeSeededKnockout, makeLeague, recordKnockoutResult, recordLeagueResult, leagueStandings, advanceAuto, saveTournament, loadTournament, clearTournament } from '../data/tournament.js';
+import { STORY_RUNS, STORY_MIN_PLAYERS, getStoryRun, startStory, recordStoryResult, saveStory, loadStory, clearStory } from '../data/story.js';
 import { playKick, playPass, playGoal, playWhistle, playGkSave, isSfxEnabled, setSfxEnabled } from '../audio/sfx.js';
 // ─── Constants ────────────────────────────────────────────────────────────
 // The logical field is big — the VIEWPORT (what the canvas shows) is smaller.
@@ -587,7 +588,7 @@ export default class GameScene extends Phaser.Scene {
     });
     document.getElementById('fulltime-menu-btn').addEventListener('click',()=>this._returnToMenu());
     document.getElementById('fulltime-rematch-btn').addEventListener('click',()=>this._rematch());
-    document.getElementById('fulltime-continue-btn').addEventListener('click',()=>this._returnToMenu({kind:'tournament'}));
+    document.getElementById('fulltime-continue-btn').addEventListener('click',()=>this._returnToMenu({kind:this._continueKind||'tournament'}));
     document.getElementById('sub-button').addEventListener('click',()=>this._openSubPanel());
     document.getElementById('sub-cancel-btn').addEventListener('click',()=>this._closeSubPanel());
     document.querySelectorAll('#sub-panel-side-tabs .sub-panel-side-tab').forEach(btn=>btn.addEventListener('click',()=>this._setSubPanelSide(btn.dataset.side)));
@@ -727,6 +728,7 @@ export default class GameScene extends Phaser.Scene {
     // already running (persisted across the page reload every match causes)
     // this jumps straight to it instead of the setup form — see
     // _renderTournamentPanel's own branch on activeTournament.
+    document.getElementById('mode-story-btn').addEventListener('click',()=>this._openStoryPanel());
     document.getElementById('mode-tournament-btn').addEventListener('click',()=>{
       document.getElementById('mode-select-panel').style.display='none';
       document.getElementById('tournament-panel').style.display='flex';
@@ -740,10 +742,12 @@ export default class GameScene extends Phaser.Scene {
   _showModeSelect(){
     document.getElementById('landing-panel').style.display='none';
     document.getElementById('tournament-panel').style.display='none';
+    document.getElementById('story-panel').style.display='none';
     document.getElementById('mode-select-panel').style.display='flex';
     document.getElementById('mode-own-code').textContent=this.roomCode;
     const hasActive=this.activeTournament&&!this.activeTournament.completedAt;
     document.getElementById('mode-tournament-btn').textContent=hasActive?'🏆 Continue Tournament':'🏆 Tournament';
+    document.getElementById('mode-story-btn').textContent=(this.activeStory&&!this.activeStory.completedAt)?'📖 Continue Story':'📖 Story';
   }
 
   /** "← Menu" in the squad editor. The squad you've built stays in memory, so
@@ -772,7 +776,7 @@ export default class GameScene extends Phaser.Scene {
     // (see _entrantPool), exactly like multiplayer fields a real human —
     // neither one has any use for the "Rival Team" tab, which only ever
     // makes sense when you're hand-building an AI opponent yourself.
-    const noRivalTab=multi||this.uiMode==='tournament';
+    const noRivalTab=multi||this.uiMode==='tournament'||this.uiMode==='story';
     document.getElementById('squad-side-tabs').style.display=noRivalTab?'none':'flex';
     if(noRivalTab&&this.editSide==='rival') this._setEditSide('me');
     document.getElementById('squad-status').textContent=(multi&&!this.net.hasPeer())?'Connecting to opponent…':'';
@@ -783,6 +787,11 @@ export default class GameScene extends Phaser.Scene {
     // note and the client-side clock sync in _incomingState) — only the
     // host gets a selector that actually does something.
     document.getElementById('half-length-row').style.display=(multi&&this.role!=='A')?'none':'flex';
+    // Story runs with a protagonist team in the roster offer to field it.
+    const run=this.uiMode==='story'?getStoryRun(this.pendingStoryRun):null;
+    const hero=document.getElementById('story-hero-btn');
+    hero.style.display=run&&this._storyHeroPool(run).length>=STORY_MIN_PLAYERS?'':'none';
+    if(run?.hero) hero.textContent=`⭐ Play as ${run.hero} (${run.game})`;
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -1099,6 +1108,15 @@ export default class GameScene extends Phaser.Scene {
       e.target.value=''; // so re-importing the same file fires change again
     });
     document.getElementById('tournament-back-btn').addEventListener('click',()=>this._closeTournamentPanel());
+    document.getElementById('story-back-btn').addEventListener('click',()=>this._closeStoryPanel());
+    document.getElementById('story-hero-btn').addEventListener('click',()=>this._useStoryHero());
+    document.getElementById('story-body').addEventListener('click',e=>{
+      const btn=e.target.closest('[data-story-action]'); if(!btn) return;
+      const action=btn.dataset.storyAction;
+      if(action==='start') this._startStorySetup(btn.dataset.run);
+      else if(action==='play') this._playStoryStep();
+      else if(action==='end'){ clearStory(); this.activeStory=null; this._renderStoryPanel(); }
+    });
     document.getElementById('squad-back-btn').addEventListener('click',()=>this._backToModeSelect());
     // The setup form and the running bracket/table are both re-rendered
     // wholesale on every change (see _renderTournamentPanel), so their
@@ -1133,6 +1151,8 @@ export default class GameScene extends Phaser.Scene {
     // any in-memory state a match's result would otherwise need to survive.
     this.activeTournament=loadTournament();
     this._tournamentPendingFixture=null;
+    this.activeStory=loadStory();
+    this._storyPending=null;
     this._consumeResume();
   }
 
@@ -2117,11 +2137,13 @@ export default class GameScene extends Phaser.Scene {
   /** Fills the XI from `pool` so every slot gets someone who actually plays
    *  that position (keeper slot from keepers, defensive slots from defenders
    *  and so on), then stocks the bench with a spread of cover. */
-  _fillSquadByPosition(pool){
+  _fillSquadByPosition(pool,{best=false}={}){
     const roles=SLOT_ROLES[this._edFormation()]||SLOT_ROLES[DEFAULT_FORMATION];
     const byPos={};
     for(const p of pool) (byPos[p.position]=byPos[p.position]||[]).push(p);
-    Object.values(byPos).forEach(list=>Phaser.Utils.Array.Shuffle(list));
+    // `best`: the strongest at each position (pop() takes from the end), for
+    // a story's own team; otherwise a random draw.
+    Object.values(byPos).forEach(list=>best?list.sort((a,b)=>this._playerRating(a)-this._playerRating(b)):Phaser.Utils.Array.Shuffle(list));
     const take=pos=>{ const l=byPos[pos]; return l&&l.length?l.pop().id:null; };
     const takeAny=()=>{ for(const l of Object.values(byPos)) if(l.length) return l.pop().id; return null; };
     const slots=roles.slice(0,TEAM_SIZE).map(r=>take(r));
@@ -2184,6 +2206,7 @@ export default class GameScene extends Phaser.Scene {
     const starterIds=this.squadSlots.filter(Boolean); if(starterIds.length!==TEAM_SIZE) return;
     const payload={starterIds,benchIds:[...this.benchIds],formation:this.chosenFormation,color:this.myTeamColor,name:this._myTeamName()};
     if(this.uiMode==='tournament'){ this._startTournamentWithSquad(payload); return; }
+    if(this.uiMode==='story'){ this._startStoryWithSquad(payload); return; }
     this.mySquadPayload=payload; this.mySquadConfirmed=true;
     this.net.sendSquad(payload);
     document.getElementById('confirm-squad-btn').disabled=true;
@@ -2448,6 +2471,113 @@ export default class GameScene extends Phaser.Scene {
     const top=this._topScorersText(t.scorers,5);
     const scorersHtml=top?`<div id="tournament-scorers" style="margin-top:12px;font-size:12px;">⚽ Your top scorers: ${escHtml(top)}</div>`:'';
     body.innerHTML=`<div style="max-width:640px;width:100%;">${bodyHtml}${scorersHtml}${actionHtml}${abandonHtml}</div>`;
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // Story mode (one game's canonical run, rival by rival — see story.js)
+  // ════════════════════════════════════════════════════════════════════
+  /** The run's steps the roster can actually field, each with the entrant id
+   *  _setRivalToEntrant takes. */
+  _storySteps(run){
+    if(!run) return [];
+    return run.steps.map(st=>({...st,entrant:`${st.team}::${run.game}`}))
+      .filter(st=>this._entrantPool(st.entrant).length>=STORY_MIN_PLAYERS);
+  }
+  _storyHeroPool(run){ return run?.hero?this._entrantPool(`${run.hero}::${run.game}`):[]; }
+  _openStoryPanel(){
+    document.getElementById('mode-select-panel').style.display='none';
+    document.getElementById('story-panel').style.display='flex';
+    this._renderStoryPanel();
+  }
+  _closeStoryPanel(){
+    document.getElementById('story-panel').style.display='none';
+    this._showModeSelect();
+  }
+  /** Run list when nothing's under way; otherwise the run's ladder: ✓ for
+   *  rivals beaten (with the score), ▶ for the next one, 🔒 for the rest. */
+  _renderStoryPanel(){
+    const body=document.getElementById('story-body');
+    const st=this.activeStory;
+    if(!st){
+      const done=new Set(this._readProfile().record.storiesCompleted);
+      body.innerHTML=STORY_RUNS.map(run=>{
+        const steps=this._storySteps(run); if(steps.length<3) return '';
+        const hero=this._storyHeroPool(run).length>=STORY_MIN_PLAYERS?` · play as ${escHtml(run.hero)} or your own XI`:'';
+        return `<div class="story-run"><div><div class="story-run-title">${escHtml(run.game)} — ${escHtml(run.title)}${done.has(run.id)?' <span class="story-done">✓ completed</span>':''}</div>
+          <div class="story-meta">${steps.length} matches · from ${escHtml(steps[0].team)} to ${escHtml(steps[steps.length-1].team)}${hero}</div></div>
+          <button class="nes-btn is-primary is-compact" data-story-action="start" data-run="${escHtml(run.id)}">Start</button></div>`;
+      }).join('');
+      return;
+    }
+    const run=getStoryRun(st.runId), steps=this._storySteps(run);
+    const wonAt=new Map(st.results.filter(r=>r.won).map(r=>[r.step,r]));
+    const tries=st.results.filter(r=>r.step===st.step&&!r.won).length;
+    const rows=steps.map((s,i)=>{
+      const r=wonAt.get(i), cur=i===st.step&&!st.completedAt;
+      const mark=r?'✓':cur?'▶':'🔒';
+      return `<li class="story-step${cur?' current':''}${r?' won':''}"><span class="story-mark">${mark}</span>
+        <span class="story-step-team">${escHtml(s.team)}</span>${r?`<span class="story-score">${r.myGoals}–${r.oppGoals}</span>`:''}
+        <div class="story-step-note">${escHtml(s.note)}</div></li>`;
+    }).join('');
+    let action;
+    if(st.completedAt) action=`<div class="story-complete">🏆 ${escHtml(run.title)} complete!</div>
+      <button class="nes-btn is-primary" data-story-action="end">New story</button>`;
+    else {
+      const next=steps[st.step];
+      action=`<button class="nes-btn is-primary" data-story-action="play">${tries?'Try again':'Play'}: vs ${escHtml(next?.team||'?')}</button>`
+        +(tries?`<div class="story-meta">${tries} ${tries>1?'tries':'try'} so far</div>`:'')
+        +`<div style="margin-top:10px;"><button class="nes-btn is-error is-compact" data-story-action="end">Abandon story</button></div>`;
+    }
+    body.innerHTML=`<div class="story-head">${escHtml(run.game)} — ${escHtml(run.title)} · ${Math.min(st.step,steps.length)}/${steps.length}</div>
+      <ol class="story-ladder">${rows}</ol>${action}`;
+  }
+  /** Story start: build the squad (or field the run's own team), which then
+   *  stays locked for the whole run — same as a tournament. */
+  _startStorySetup(runId){
+    if(!getStoryRun(runId)) return;
+    this.pendingStoryRun=runId;
+    this.uiMode='story';
+    this._applyUiMode();
+    document.getElementById('story-panel').style.display='none';
+    document.getElementById('squad-editor-panel').style.display='flex';
+  }
+  _useStoryHero(){
+    const run=getStoryRun(this.pendingStoryRun); if(!run) return;
+    this._setEditSide('me');
+    this._fillSquadByPosition(this._storyHeroPool(run),{best:true});
+    document.getElementById('squad-team-name').value=run.hero;
+    this._squadSel=null; this._pickPosFilter=null;
+    this._renderPitch(); this._renderPickList();
+  }
+  _startStoryWithSquad(payload){
+    // Difficulty and half length ride along with the run: every match ends
+    // in a page reload that would otherwise reset both.
+    this.activeStory={...startStory(this.pendingStoryRun,payload,this.halfLengthS),aiLevel:this.aiLevel};
+    saveStory(this.activeStory);
+    document.getElementById('squad-editor-panel').style.display='none';
+    document.getElementById('story-panel').style.display='flex';
+    this._renderStoryPanel();
+  }
+  _playStoryStep(){
+    const st=this.activeStory; if(!st||st.completedAt) return;
+    const step=this._storySteps(getStoryRun(st.runId))[st.step]; if(!step) return;
+    this._setRivalToEntrant(step.entrant);
+    this._rivalName=step.team;
+    this._storyPending={step:st.step};
+    if(AI_LEVELS[st.aiLevel]) this.aiLevel=st.aiLevel;
+    if(st.halfLengthS){ this.halfLengthS=st.halfLengthS; this.matchClock.secondsRemaining=this.halfLengthS; this._renderClock(this.matchClock); }
+    document.getElementById('story-panel').style.display='none';
+    this._startMatch(st.mySquad,this._rivalSquadPayload());
+  }
+  /** Called from _showFullTime. Level games go to golden-goal overtime
+   *  (story isn't a league), so there's always a winner. */
+  _recordStoryResult(myGoals,oppGoals){
+    const st=this.activeStory; if(!st) return;
+    const steps=this._storySteps(getStoryRun(st.runId));
+    this.activeStory=recordStoryResult(st,myGoals,oppGoals,steps.length);
+    saveStory(this.activeStory);
+    this._storyPending=null;
+    if(this.activeStory.completedAt&&!st.completedAt) this._profileRecordTrophy('story',st.runId);
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -4229,7 +4359,7 @@ export default class GameScene extends Phaser.Scene {
     const scoreTxt=document.querySelector('#scoreboard .score').textContent;
     const [a,b]=scoreTxt.split('-').map(n=>parseInt(n,10)||0);
     const mine=this.role==='A'?a:b, theirs=this.role==='A'?b:a;
-    const inTournament=!!this._tournamentPendingFixture;
+    const inTournament=!!this._tournamentPendingFixture, inStory=!!this._storyPending;
     const report=this.role==='A'?this._matchReport():this.remoteState?.report;
     const myScorers=(report?.goals||[]).filter(g=>g.role===this.role).map(g=>g.id);
     // Tournaments are offline-only (the fixture is set up locally, from the
@@ -4237,6 +4367,7 @@ export default class GameScene extends Phaser.Scene {
     // (see _playTournamentFixture) — recorded here, before any reload, since
     // nothing in memory survives it.
     if(this._tournamentPendingFixture&&this.role==='A') this._recordTournamentResult(this._tournamentPendingFixture,mine,theirs,myScorers);
+    if(inStory&&this.role==='A') this._recordStoryResult(mine,theirs);
     this._profileRecordMatch(mine,theirs,myScorers);
     document.getElementById('fulltime-score').textContent=scoreTxt;
     const ot=(this.role==='A'?this.matchClock:this.remoteState?.clock)?.overtime?' in overtime':'';
@@ -4245,9 +4376,10 @@ export default class GameScene extends Phaser.Scene {
     const multi=this.uiMode==='multiplayer'||this.net.hasPeer();
     const rematch=document.getElementById('fulltime-rematch-btn');
     const cont=document.getElementById('fulltime-continue-btn');
-    rematch.style.display=(!multi&&!inTournament&&this._lastMatchPayloads)?'':'none';
-    cont.style.display=inTournament?'':'none';
-    cont.textContent='🏆 Back to the tournament';
+    rematch.style.display=(!multi&&!inTournament&&!inStory&&this._lastMatchPayloads)?'':'none';
+    cont.style.display=(inTournament||inStory)?'':'none';
+    this._continueKind=inStory?'story':'tournament';
+    cont.textContent=inStory?'📖 Continue the story':'🏆 Back to the tournament';
     document.getElementById('confrontation-ui').style.display='none';
     document.getElementById('duel-reveal').style.display='none';
     document.getElementById('fulltime-panel').style.display='flex';
@@ -4283,6 +4415,9 @@ export default class GameScene extends Phaser.Scene {
       document.getElementById('landing-panel').style.display='none';
       document.getElementById('tournament-panel').style.display='flex';
       this._renderTournamentPanel();
+    } else if(resume.kind==='story'&&this.activeStory){
+      document.getElementById('landing-panel').style.display='none';
+      this._openStoryPanel();
     }
   }
 

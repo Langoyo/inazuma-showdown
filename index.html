@@ -540,6 +540,22 @@
     }
     /* ---- full-time screen */
     #fulltime-panel    { overflow-y: auto; }
+    /* ---- story mode */
+    #story-panel { overflow-y: auto; }
+    #story-body  { width: 100%; max-width: 480px; }
+    .story-run { display: flex; gap: 10px; align-items: center; justify-content: space-between; text-align: left; padding: 10px; margin-bottom: 8px; border: 3px solid #000; background: var(--panel-2); }
+    .story-run-title { font-size: 14px; }
+    .story-done { font-size: 11px; color: var(--gold); }
+    .story-meta { font-size: 11px; opacity: 0.75; margin-top: 2px; }
+    .story-head { font-size: 14px; color: var(--gold); margin-bottom: 8px; }
+    .story-ladder { list-style: none; padding: 0; margin: 0 0 14px; text-align: left; }
+    .story-step { padding: 6px 8px; border-bottom: 2px solid rgba(255,255,255,0.08); opacity: 0.55; font-size: 13px; }
+    .story-step.won { opacity: 0.85; }
+    .story-step.current { opacity: 1; background: rgba(255,217,102,0.12); border-left: 4px solid var(--gold); }
+    .story-mark { display: inline-block; width: 22px; }
+    .story-score { float: right; font-size: 12px; }
+    .story-step-note { font-size: 11px; opacity: 0.75; margin-left: 22px; }
+    .story-complete { font-size: 16px; color: var(--gold); margin-bottom: 10px; }
     #fulltime-score    { font-family: 'Jersey 10','Silkscreen',monospace; font-size: 52px; margin: 6px 0 8px; }
     #fulltime-verdict  { font-size: 17px; color: var(--gold); margin-bottom: 14px; }
     /* Match report: each side's scorers, a stat table read from the middle
@@ -673,6 +689,7 @@
       <button id="mode-solo-btn" class="nes-btn is-primary">🤖 Solo (vs AI)</button>
       <button id="mode-multi-btn" class="nes-btn is-warning">👥 Multiplayer</button>
       <button id="mode-tournament-btn" class="nes-btn is-success">🏆 Tournament</button>
+      <button id="mode-story-btn" class="nes-btn is-error">📖 Story</button>
     </div>
     <div id="mode-multi-panel" style="display:none;max-width:380px;">
       <p style="font-size:11px;opacity:0.75;margin-bottom:14px;">
@@ -701,6 +718,7 @@
 
     <!-- Switch between editing your own squad and the rival's (solo vs AI only —
          a real connected opponent always picks their own team regardless). -->
+    <button id="story-hero-btn" class="nes-btn is-warning is-compact" type="button" style="display:none;margin-bottom:8px;">⭐ Play as</button>
     <div id="squad-side-tabs">
       <button class="squad-side-tab nes-btn is-primary" data-side="me">Your Team</button>
       <button class="squad-side-tab nes-btn" data-side="rival">Rival Team</button>
@@ -927,6 +945,13 @@
     <h2>Tournaments <span class="info-icon" data-info-title="Offline tournaments" data-info-body="Play a knockout or a small league against the game's own real teams. Pick how many teams play, then build your squad — it locks in for the whole tournament once it starts and can't be changed. Opponents are drawn at random from teams with enough named players to field a full XI: in a knockout they get tougher each round you win (your first match is the softest draw, the final is the hardest), while a league keeps one flat difficulty throughout. Every match that doesn't involve you is resolved instantly behind the scenes, so you only ever actually play your own games.">ⓘ</span></h2>
     <div id="tournament-body"></div>
     <button id="tournament-back-btn" class="nes-btn is-compact" style="margin-top:16px;">← Back</button>
+  </div>
+
+  <!-- Story mode: one game's canonical run, rival by rival (see story.js). -->
+  <div id="story-panel" class="panel-overlay">
+    <h2>Story <span class="info-icon" data-info-title="Story mode" data-info-body="Play one game's story, rival by rival, in the order the game has them. Build your squad (or field the game's own team where the roster has it) — it stays locked for the whole run. Win to move on to the next rival; lose and you can try the same match again as many times as you like. Finishing a run marks it complete in your profile.">ⓘ</span></h2>
+    <div id="story-body"></div>
+    <button id="story-back-btn" class="nes-btn is-compact" style="margin-top:16px;">← Back</button>
   </div>
 
   <!-- Camera scroll control: a joystick on touch devices, a WASD-styled

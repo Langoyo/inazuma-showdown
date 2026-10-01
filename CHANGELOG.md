@@ -4,6 +4,41 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Story mode: each game's run, rival by rival
+A new **📖 Story** mode plays one game's canonical run in order, against
+the real teams. The runs live in `src/data/story.js` (`STORY_RUNS`):
+
+| Run | From → to | Matches |
+|---|---|---|
+| IE1 Football Frontier | Royal → Zeus | 10 |
+| IE2 Alius Academy | Gemini Storm → Genesis | 7 |
+| IE3 FFI | Big Waves → Little Gigantes | 9 |
+| GO1 Holy Road | Eito → Dragon Link | 8 |
+| GO2 Chrono Stone | Protocol Omega → Garu | 7 |
+| GO3 Galaxy | Big Waves → Big Bang | 8 |
+
+**Which teams made it in.** A rival needs at least `STORY_MIN_PLAYERS`
+(10) of its own players in that game; any gap is filled like a
+hand-built rival. Several canonical opponents are missing for that
+reason: Protocol Omega 2.0, Zanark's Domain and Ragnarok in GO2, and
+most of the GO3 planets. Those runs use the next-best real teams, and a
+test checks every listed rival can be fielded. Reordering a run is just
+editing its list.
+
+**How a run plays:**
+- You build a squad that stays locked for the run, like a tournament.
+  Difficulty and half length are locked too.
+- Where the roster has the protagonist team, "⭐ Play as Raimon (IE1)"
+  fields its strongest XI by position (IE1, IE2, GO1).
+- The panel shows the ladder: ✓ for rivals beaten, with the score; ▶ for
+  the next one; 🔒 for the rest.
+- A level game goes to golden-goal overtime, so every match has a winner.
+- Win and you move on. Lose and you get "Try again" on the same rival,
+  with the number of tries shown.
+- "📖 Continue the story" at full time reloads straight back to the
+  ladder. Finishing a run marks it ✓ and counts it in your profile's
+  career record (📖).
+
 ## Career record in the profile, and tournament top scorers
 The profile now keeps a **career record** alongside your name and squads,
 shown under "Career" in the profile section. For example:
