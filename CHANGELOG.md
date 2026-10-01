@@ -4,6 +4,35 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Match report and Rematch
+Full time used to show only the score, then reload to the menu after 9
+seconds. It now shows a **match report** and waits for you:
+
+- **Scorers** for each side, with the minute (play time scaled onto 90',
+  so it reads the same whatever the half length; overtime goals show as
+  90+n').
+- **A stat table**: shots (on target), possession %, duels won, saves,
+  blocks and supertechniques used.
+- **An MVP** with portrait: 3 points a goal, 2 a save, 1 a duel won or a
+  block, with a tie going to the winning side.
+
+The host counts everything where it's decided (`_stat` / `_recordGoal`
+in `_startShot`, `_nextShotStage`, `_applyConfrontOutcome`, `_shotGoesIn`,
+and possession per tick in `_hostUpdate`). The finished report rides
+along in the state sent to the client once the clock ends, so both
+players see the same one.
+
+**What next:**
+- **Rematch** (vs AI only) starts the same two squads again, with the
+  same half length and difficulty.
+- **Back to the tournament** reopens the bracket after a tournament
+  fixture.
+- **Menu** goes home. Multiplayer only offers Menu.
+
+All three still go through the page reload (the scene's controls are
+bound once). They leave a note in `sessionStorage` that `_consumeResume`
+reads once after the roster loads.
+
 ## Type-to-search Team and Game filters
 The Team filter was a native dropdown with 100+ entries, era sub-options
 included, which is slow to scroll, especially on a phone. Team and Game

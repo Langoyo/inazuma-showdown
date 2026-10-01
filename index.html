@@ -537,10 +537,27 @@
       padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 4px;
     }
     /* ---- full-time screen */
-    #fulltime-score    { font-family: 'Jersey 10','Silkscreen',monospace; font-size: 52px; margin: 10px 0 12px; }
-    #fulltime-verdict  { font-size: 17px; color: var(--gold); margin-bottom: 20px; }
-    #fulltime-menu-btn { padding: 12px 26px; font-size: 15px; }
-    #fulltime-countdown { font-size: 13px; opacity: 0.8; margin-top: 12px; }
+    #fulltime-panel    { overflow-y: auto; }
+    #fulltime-score    { font-family: 'Jersey 10','Silkscreen',monospace; font-size: 52px; margin: 6px 0 8px; }
+    #fulltime-verdict  { font-size: 17px; color: var(--gold); margin-bottom: 14px; }
+    /* Match report: each side's scorers, a stat table read from the middle
+       out (home left, away right), and the MVP. */
+    #fulltime-report   { width: 100%; max-width: 420px; font-size: 13px; margin-bottom: 16px; }
+    .ft-goals { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: left; margin-bottom: 12px; }
+    .ft-goals > div:last-child { text-align: right; }
+    .ft-team  { color: var(--gold); font-size: 12px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ft-none  { opacity: 0.5; }
+    .ft-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+    .ft-table td, .ft-table th { padding: 4px 6px; border-bottom: 2px solid rgba(255,255,255,0.08); }
+    .ft-table th { font-weight: normal; opacity: 0.75; font-size: 12px; }
+    .ft-table td:first-child { text-align: left; } .ft-table td:last-child { text-align: right; }
+    .ft-mvp { display: flex; align-items: center; gap: 12px; justify-content: center; text-align: left; padding: 8px; border: 3px solid var(--gold); background: rgba(255,217,102,0.08); }
+    .ft-mvp-portrait { width: 48px; height: 48px; flex: 0 0 auto; border: 2px solid #000; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+    .ft-mvp-tag  { font-size: 11px; color: var(--gold); }
+    .ft-mvp-name { font-size: 15px; }
+    .ft-mvp-line { font-size: 11px; opacity: 0.8; }
+    #fulltime-actions  { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+    #fulltime-actions .nes-btn { padding: 10px 18px; font-size: 14px; }
 
     #confirm-squad-btn { padding: 10px 24px; font-size: 14px; }
     #squad-status { font-size: 13px; opacity: 0.9; }
@@ -626,12 +643,16 @@
   </div>
 
   <!-- ===================== FULL TIME ===================== -->
-  <div id="fulltime-panel" class="panel-overlay" style="justify-content:center;text-align:center;">
+  <div id="fulltime-panel" class="panel-overlay" style="justify-content:safe center;text-align:center;">
     <h2 style="font-size:20px;">Full time</h2>
     <div id="fulltime-score">0 - 0</div>
     <div id="fulltime-verdict"></div>
-    <button id="fulltime-menu-btn" class="nes-btn is-primary">Back to the menu</button>
-    <div id="fulltime-countdown"></div>
+    <div id="fulltime-report"></div>
+    <div id="fulltime-actions">
+      <button id="fulltime-rematch-btn" class="nes-btn is-success">🔁 Rematch</button>
+      <button id="fulltime-continue-btn" class="nes-btn is-success" style="display:none">🏆 Back to the tournament</button>
+      <button id="fulltime-menu-btn" class="nes-btn is-primary">Menu</button>
+    </div>
   </div>
 
   <!-- ===================== LANDING ===================== -->

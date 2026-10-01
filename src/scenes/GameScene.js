@@ -22,7 +22,9 @@ const GOAL_CLICK_MARGIN = 80;
 const GOAL_RUNOFF       = 170;
 const GOAL_DEPTH        = 90;
 // How long the full-time screen stays up before it drops back to the menu.
-const FULLTIME_MENU_MS  = 9000;
+// Where full time leaves a note for the page it reloads into (see _returnToMenu).
+const RESUME_KEY = 'inazuma-clone:resume:v1';
+const escHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const WAYPOINT_RADIUS   = 20;
 const MIN_PATH_PT_DIST  = 18;
 const PLAYER_SEL_RADIUS = 36;
@@ -512,7 +514,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.halfLengthS=HALF_S; // overridable via the squad editor's half-length select
     this.matchClock={half:1,secondsRemaining:this.halfLengthS,ended:false};
-    this._fullTimeShown=false; this._fullTimeTimer=null;
+    this._fullTimeShown=false; this._reportShown=false;
     this.possRole=null; this.currentPossession=null;
     this.offsideFlag=null; // {role,ids} of a passer's teammates who were offside when the current pass was made
     this.duelLockUntil=0; this.confrontation=null;
@@ -573,6 +575,8 @@ export default class GameScene extends Phaser.Scene {
       this.pendingChoice={tech:parseInt(btn.dataset.idx,10)};
     });
     document.getElementById('fulltime-menu-btn').addEventListener('click',()=>this._returnToMenu());
+    document.getElementById('fulltime-rematch-btn').addEventListener('click',()=>this._rematch());
+    document.getElementById('fulltime-continue-btn').addEventListener('click',()=>this._returnToMenu({kind:'tournament'}));
     document.getElementById('sub-button').addEventListener('click',()=>this._openSubPanel());
     document.getElementById('sub-cancel-btn').addEventListener('click',()=>this._closeSubPanel());
     document.querySelectorAll('#sub-panel-side-tabs .sub-panel-side-tab').forEach(btn=>btn.addEventListener('click',()=>this._setSubPanelSide(btn.dataset.side)));
@@ -1118,6 +1122,7 @@ export default class GameScene extends Phaser.Scene {
     // any in-memory state a match's result would otherwise need to survive.
     this.activeTournament=loadTournament();
     this._tournamentPendingFixture=null;
+    this._consumeResume();
   }
 
   // ---- saved squads ------------------------------------------------------
@@ -2449,6 +2454,10 @@ export default class GameScene extends Phaser.Scene {
     this.gkIdB=this._findGkId(payloadB.starterIds);
     this.activeIdA=this.teamA[0]?.id; this.activeIdB=this.teamB[0]?.id;
     this._setScoreboardNames(payloadA.name||'You',payloadB.name||(this.uiMode==='multiplayer'?'Opponent':'Rival'));
+    this.matchStats=this._newMatchStats();
+    // Kept for "Rematch" (see _rematch), which rebuilds this exact match
+    // after the reload full time ends in.
+    this._lastMatchPayloads={a:payloadA,b:payloadB};
     this.matchStarted=true;
     // Coin toss for the first half; _tickClock hands the second to the other
     // side, so each half is started by a different team.
@@ -3543,6 +3552,7 @@ export default class GameScene extends Phaser.Scene {
     const target=this._clampAim(aRole,opts.target?opts.target.x:this.FIELD_W/2);
     const from={x:eAtk.body.position.x,y:eAtk.body.position.y};
     this.shotSeq={aRole,dRole,target,from,noPath:!!opts.noPath,stages:[],idx:0,power:null,names:[],kickerId:eAtk.id,shooterId:eAtk.id};
+    this._stat(aRole,'shots');
     this.confrontation={type:'strike',solo:true,attackerRole:aRole,defenderRole:dRole,attackerId:eAtk.id,defenderId:null,
       deadline:now+CONFRONT_MS,attackerChoice:null,defenderChoice:'none',shotLine:{from:{...from},to:{...target}}};
   }
@@ -3575,6 +3585,7 @@ export default class GameScene extends Phaser.Scene {
     } else if(st.kind==='block'){
       this.confrontation={...base,type:'block',attackerId:seq.kickerId,defenderId:st.id,attackerChoice:'normal',attackerLocked:true};
     } else {
+      this._stat(seq.aRole,'onTarget');
       const reach=this._keeperReach(seq.dRole,seq.from,seq.target);
       if(reach<=0){ this._shotGoesIn(now,'into the empty net'); return; }
       const gkId=seq.dRole==='A'?this.gkIdA:this.gkIdB;
@@ -3600,6 +3611,7 @@ export default class GameScene extends Phaser.Scene {
     if(!seq){ this.confrontation=null; return; }
     const st=this._statsFor(c.attackerRole,c.attackerId), e=this._entryById(c.attackerRole,c.attackerId);
     const tech=st?this._tryTech(st,'shot',c.attackerChoice):null;
+    if(tech) this._stat(c.attackerRole,'techs');
     const name=st?.name||'';
     let title, fxTech=tech;
     if(c.type==='strike'){
@@ -3627,6 +3639,7 @@ export default class GameScene extends Phaser.Scene {
     const seq=this.shotSeq;
     const name=this._statsFor(seq.aRole,seq.kickerId)?.name||'';
     this.confrontation=null; this.shotSeq=null;
+    this._recordGoal(seq.aRole,seq.kickerId);
     this._onGoal(seq.aRole==='A'?'a':'b');
     this.confrontResult={title:`⚽ GOAL! ${name} puts it ${how}! (${this.score.a} - ${this.score.b})`,outcome:'',until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS};
   }
@@ -3720,6 +3733,8 @@ export default class GameScene extends Phaser.Scene {
     // block and keeper stages face the accumulated seq.power.
     const aTech=seq?null:this._tryTech(as,atk,c.attackerChoice);
     const dTech=this._tryTech(ds,def,c.defenderChoice);
+    if(aTech) this._stat(c.attackerRole,'techs');
+    if(dTech) this._stat(c.defenderRole,'techs');
     // Elemental edge — only one side can hold it, and only when both players
     // have a known element (the roster doesn't have one for everyone).
     const elEdge=this._elementEdge(as.element,ds.element);
@@ -3786,6 +3801,7 @@ export default class GameScene extends Phaser.Scene {
     let title,outcome=`${aName}: ${aTN} · ${dName}: ${dTN}`;
     if(c.type==='duel'){
       const eA=this._activeEntry(c.attackerRole), eD=this._activeEntry(c.defenderRole);
+      this._stat(aWins?c.attackerRole:c.defenderRole,'duelsWon',1,aWins?c.attackerId:c.defenderId);
       if(aWins){ this._knockback(eD,eA); this.stunMap.set(c.defenderId,now+STUN_MS); title=`${aName} dribbles past!`; }
       else { this.possRole=c.defenderRole; this._setActive(c.defenderRole,c.defenderId); this._knockback(eA,eD); this.stunMap.set(c.attackerId,now+STUN_MS); title=`${dName} wins the ball!`; }
       this.duelLockUntil=now+STUN_MS+200;
@@ -3801,6 +3817,7 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
       this.shotSeq=null;
+      this._stat(c.defenderRole,'blocks',1,c.defenderId);
       // Blocked clean: the ball pops loose at the blocker's feet, turnover.
       // Look them up by the id the confrontation actually names — they
       // aren't necessarily who was "active" for the team before this.
@@ -3810,6 +3827,7 @@ export default class GameScene extends Phaser.Scene {
       if(eD?.body){ this.matter.body.setPosition(this.ball,{x:eD.body.position.x,y:eD.body.position.y}); this.matter.body.setVelocity(this.ball,{x:0,y:0}); }
       title=`${dName} blocks the shot!`;
     } else if(aWins){
+      this._recordGoal(c.attackerRole,c.attackerId);
       this._onGoal(c.attackerRole==='A'?'a':'b');
       // this.score was just updated by _onGoal, so it already reflects
       // this goal — the banner shows the result, not just who scored.
@@ -3821,6 +3839,7 @@ export default class GameScene extends Phaser.Scene {
       this.possRole=c.defenderRole;
       this._setActive(c.defenderRole,c.defenderId);
       title=`${dName} saves it!`;
+      this._stat(c.defenderRole,'saves',1,c.defenderId);
       playGkSave();
     }
     if(c.type==='shot') this.shotSeq=null;
@@ -4047,43 +4066,150 @@ export default class GameScene extends Phaser.Scene {
     if(c.ended) this._showFullTime();
   }
 
-  /** Full time: show the final score, then drop back to the start menu. The
-   *  reset is a reload on purpose — every control in the menu is bound to this
-   *  scene instance, so rebuilding a match in place would leave the old
-   *  bindings behind. The room code lives in the URL, so it survives. */
+  // ---- match report --------------------------------------------------------
+  /** Host-side tally behind the full-time report (see _matchReport). Each
+   *  count is bumped where that event is actually decided, so the report
+   *  can't disagree with the banners shown during the match. */
+  _newMatchStats(){
+    const side=()=>({shots:0,onTarget:0,duelsWon:0,saves:0,blocks:0,techs:0,possMs:0});
+    return {elapsedS:0,goals:[],A:side(),B:side(),players:{}};
+  }
+  _playerLine(role,id){ return (this.matchStats.players[id]??={role,goals:0,duelsWon:0,saves:0,blocks:0}); }
+  /** +n to `role`'s `key`, and to that player's own line when `id` is given. */
+  _stat(role,key,n=1,id=null){
+    const ms=this.matchStats; if(!ms?.[role]) return;
+    ms[role][key]+=n;
+    if(id!=null){ const p=this._playerLine(role,id); if(key in p) p[key]+=n; }
+  }
+  _recordGoal(role,id){
+    const ms=this.matchStats; if(!ms||id==null) return;
+    ms.goals.push({role,id,name:this._statsFor(role,id)?.name||'',min:this._matchMinute()});
+    this._playerLine(role,id).goals++;
+  }
+  /** Play so far, scaled onto a 90-minute match whatever the half length;
+   *  overtime carries on past 90 ("90+3'"). */
+  _matchMinute(){
+    const m=Math.max(1,Math.ceil((this.matchStats?.elapsedS||0)/(2*this.halfLengthS)*90));
+    return m>90?`90+${m-90}'`:`${m}'`;
+  }
+  /** What the full-time panel shows — plain data, so the host can send the
+   *  very same thing to its client (see sendState's `report`). The MVP is
+   *  whoever did the most: 3 a goal, 2 a save, 1 a duel won or a block, with
+   *  a tie going to the winning side. */
+  _matchReport(){
+    const ms=this.matchStats; if(!ms) return null;
+    const totalPoss=(ms.A.possMs+ms.B.possMs)||1;
+    const sideOut=r=>({...ms[r],poss:Math.round(ms[r].possMs/totalPoss*100)});
+    const winner=this.score.a>this.score.b?'A':this.score.b>this.score.a?'B':null;
+    let mvp=null, best=0;
+    for(const [id,p] of Object.entries(ms.players)){
+      const score=3*p.goals+2*p.saves+p.duelsWon+p.blocks;
+      if(score>best||(score===best&&score>0&&p.role===winner&&mvp?.role!==winner)){
+        best=score;
+        const parts=[p.goals&&`${p.goals} goal${p.goals>1?'s':''}`,p.saves&&`${p.saves} save${p.saves>1?'s':''}`,p.duelsWon&&`${p.duelsWon} duel${p.duelsWon>1?'s':''} won`,p.blocks&&`${p.blocks} block${p.blocks>1?'s':''}`].filter(Boolean);
+        mvp={id,role:p.role,name:this._statsFor(p.role,id)?.name||'',line:parts.join(' · ')};
+      }
+    }
+    return {goals:ms.goals.slice(0,40),A:sideOut('A'),B:sideOut('B'),mvp};
+  }
+  _renderMatchReport(rep){
+    const box=document.getElementById('fulltime-report');
+    if(!rep){ box.innerHTML=''; return; }
+    this._reportShown=true;
+    const nameA=document.getElementById('score-name-a').textContent||'Home';
+    const nameB=document.getElementById('score-name-b').textContent||'Away';
+    const goals=r=>rep.goals.filter(g=>g.role===r).map(g=>`<div>⚽ ${escHtml(g.min)} ${escHtml(g.name)}</div>`).join('')||'<div class="ft-none">—</div>';
+    const row=(label,a,b)=>`<tr><td>${a}</td><th>${label}</th><td>${b}</td></tr>`;
+    const A=rep.A, B=rep.B;
+    let mvp='';
+    if(rep.mvp){
+      const rp=getPlayerById(rep.mvp.id);
+      const av=this._avatarFill(rp,this._css3(rp?this._rosterColor(rp):0x999999));
+      mvp=`<div class="ft-mvp"><div class="ft-mvp-portrait" style="${av.style}">${escHtml(av.inner)}</div>
+        <div><div class="ft-mvp-tag">⭐ MVP</div><div class="ft-mvp-name">${escHtml(rep.mvp.name)}</div><div class="ft-mvp-line">${escHtml(rep.mvp.line)}</div></div></div>`;
+    }
+    box.innerHTML=`
+      <div class="ft-goals"><div><div class="ft-team">${escHtml(nameA)}</div>${goals('A')}</div><div><div class="ft-team">${escHtml(nameB)}</div>${goals('B')}</div></div>
+      <table class="ft-table">
+        ${row('Shots (on target)',`${A.shots} (${A.onTarget})`,`${B.shots} (${B.onTarget})`)}
+        ${row('Possession',`${A.poss}%`,`${B.poss}%`)}
+        ${row('Duels won',A.duelsWon,B.duelsWon)}
+        ${row('Saves',A.saves,B.saves)}
+        ${row('Blocks',A.blocks,B.blocks)}
+        ${row('Supertechniques',A.techs,B.techs)}
+      </table>${mvp}`;
+  }
+
+  /** Full time: the final score and the match report. It stays up until you
+   *  pick what's next — Rematch (vs AI), back to the tournament, or the
+   *  menu — every one of which goes through a page reload on purpose: every
+   *  control in the menu is bound to this scene instance, so rebuilding a
+   *  match in place would leave the old bindings behind. The room code lives
+   *  in the URL, so it survives. */
   _showFullTime(){
-    if(this._fullTimeShown) return;
+    if(this._fullTimeShown){
+      // A client can see the clock end a frame before the state carrying
+      // the report lands.
+      if(!this._reportShown&&this.role!=='A'&&this.remoteState?.report) this._renderMatchReport(this.remoteState.report);
+      return;
+    }
     this._fullTimeShown=true;
     playWhistle();
     const scoreTxt=document.querySelector('#scoreboard .score').textContent;
     const [a,b]=scoreTxt.split('-').map(n=>parseInt(n,10)||0);
     const mine=this.role==='A'?a:b, theirs=this.role==='A'?b:a;
+    const inTournament=!!this._tournamentPendingFixture;
     // Tournaments are offline-only (the fixture is set up locally, from the
     // rival slot) and the pending fixture is only ever set on the host side
-    // (see _playTournamentFixture) — recorded here, before the reload
-    // _returnToMenu does in a few seconds, since nothing in memory survives
-    // that reload otherwise.
+    // (see _playTournamentFixture) — recorded here, before any reload, since
+    // nothing in memory survives it.
     if(this._tournamentPendingFixture&&this.role==='A') this._recordTournamentResult(this._tournamentPendingFixture,mine,theirs);
     document.getElementById('fulltime-score').textContent=scoreTxt;
     const ot=(this.role==='A'?this.matchClock:this.remoteState?.clock)?.overtime?' in overtime':'';
     document.getElementById('fulltime-verdict').textContent=mine>theirs?`You win${ot}!`:mine<theirs?`You lose${ot}`:'Draw';
+    this._renderMatchReport(this.role==='A'?this._matchReport():this.remoteState?.report);
+    const multi=this.uiMode==='multiplayer'||this.net.hasPeer();
+    const rematch=document.getElementById('fulltime-rematch-btn');
+    const cont=document.getElementById('fulltime-continue-btn');
+    rematch.style.display=(!multi&&!inTournament&&this._lastMatchPayloads)?'':'none';
+    cont.style.display=inTournament?'':'none';
+    cont.textContent='🏆 Back to the tournament';
     document.getElementById('confrontation-ui').style.display='none';
     document.getElementById('duel-reveal').style.display='none';
     document.getElementById('fulltime-panel').style.display='flex';
-    const cd=document.getElementById('fulltime-countdown');
-    let left=Math.round(FULLTIME_MENU_MS/1000);
-    const tick=()=>{
-      if(left<=0){ this._returnToMenu(); return; }
-      cd.textContent=`Back to the menu in ${left}s…`;
-      left-=1;
-    };
-    tick();
-    this._fullTimeTimer=setInterval(tick,1000);
   }
 
-  _returnToMenu(){
-    if(this._fullTimeTimer){ clearInterval(this._fullTimeTimer); this._fullTimeTimer=null; }
+  _returnToMenu(resume=null){
+    try{
+      if(resume) sessionStorage.setItem(RESUME_KEY,JSON.stringify(resume));
+      else sessionStorage.removeItem(RESUME_KEY);
+    }catch{ /* storage blocked: falls back to the plain menu */ }
     window.location.reload();
+  }
+  /** Same two squads, same settings, straight into a new match after the reload. */
+  _rematch(){
+    if(!this._lastMatchPayloads) return this._returnToMenu();
+    this._returnToMenu({kind:'rematch',a:this._lastMatchPayloads.a,b:this._lastMatchPayloads.b,halfLengthS:this.halfLengthS,aiLevel:this.aiLevel});
+  }
+  /** Picks up whatever full time asked for (see _returnToMenu) once the
+   *  roster is loaded: a rematch starts at once, a tournament reopens its
+   *  bracket. Read once, then cleared, so a manual reload is a fresh start. */
+  _consumeResume(){
+    let resume=null;
+    try{ resume=JSON.parse(sessionStorage.getItem(RESUME_KEY)||'null'); sessionStorage.removeItem(RESUME_KEY); }catch{ return; }
+    if(!resume) return;
+    if(resume.kind==='rematch'&&resume.a?.starterIds?.length&&resume.b?.starterIds?.length){
+      document.getElementById('landing-panel').style.display='none';
+      this.uiMode='solo'; this._applyUiMode();
+      if(AI_LEVELS[resume.aiLevel]){ this.aiLevel=resume.aiLevel; document.getElementById('ai-level-select').value=resume.aiLevel; }
+      if(resume.halfLengthS>0){ this.halfLengthS=resume.halfLengthS; this.matchClock.secondsRemaining=this.halfLengthS; this._renderClock(this.matchClock); }
+      this._rivalName=resume.b.name;
+      this._startMatch(resume.a,resume.b);
+    } else if(resume.kind==='tournament'&&this.activeTournament){
+      document.getElementById('landing-panel').style.display='none';
+      document.getElementById('tournament-panel').style.display='flex';
+      this._renderTournamentPanel();
+    }
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -4142,6 +4268,10 @@ export default class GameScene extends Phaser.Scene {
     this._applySquadRequests(myInput,inputB,aiActive);
     if(!this.matchClock.ended) this._tickClock(delta);
     if(!this.matchClock.ended) this._tickFatigue(delta);
+    if(!this.matchClock.ended&&this.matchStats){
+      this.matchStats.elapsedS+=delta/1000;
+      if(this.possRole) this.matchStats[this.possRole].possMs+=delta;
+    }
 
     if(this.confrontation){
       this._progressConfront(now,myInput,inputB,aiActive);
@@ -4189,7 +4319,7 @@ export default class GameScene extends Phaser.Scene {
         a:this.teamA.filter(e=>this._isOut('A',e.id)).map(e=>e.id),
         b:this.teamB.filter(e=>this._isOut('B',e.id)).map(e=>e.id)
       };
-      this.net.sendState({matchStarted:true,ball:{x:this.ball.position.x,y:this.ball.position.y},ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>({x:e.body.position.x,y:e.body.position.y})),teamB:this.teamB.map(e=>({x:e.body.position.x,y:e.body.position.y})),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,attackerLocked:!!this.confrontation.attackerLocked,solo:!!this.confrontation.solo,keeperReach:this.confrontation.keeperReach??null,shotLine:this.confrontation.shotLine||null}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)},clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended,overtime:!!this.matchClock.overtime,otElapsed:this.matchClock.otElapsed||0},stuns:stunAry,teamPanelOpen:this.teamPanelOpen});
+      this.net.sendState({matchStarted:true,ball:{x:this.ball.position.x,y:this.ball.position.y},ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>({x:e.body.position.x,y:e.body.position.y})),teamB:this.teamB.map(e=>({x:e.body.position.x,y:e.body.position.y})),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,attackerLocked:!!this.confrontation.attackerLocked,solo:!!this.confrontation.solo,keeperReach:this.confrontation.keeperReach??null,shotLine:this.confrontation.shotLine||null}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)},clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended,overtime:!!this.matchClock.overtime,otElapsed:this.matchClock.otElapsed||0},stuns:stunAry,teamPanelOpen:this.teamPanelOpen,report:this.matchClock.ended?this._matchReport():null});
     }
   }
 
