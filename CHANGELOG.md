@@ -20,6 +20,15 @@ versa. The hidden `<select>`s remain the source of truth, so the ✕
 buttons, "whole team" and the list filtering work unchanged. Position
 stays a plain dropdown.
 
+**Browsing the list.** The suggestions can also just be scrolled to see
+what's there. Opening a box that already has a pick shows every team
+(the pick's own text used to filter the list down to itself) and centres
+on the current pick; only typing turns the text into a search. Rows now
+pick on `click` instead of `pointerdown`, so a finger that starts a scroll
+on a phone no longer chooses the row under it. The list has a ▾ caret,
+`touch-action: pan-y` and `overscroll-behavior: contain` so it scrolls
+without moving the drawer behind it, and a taller `min(320px, 45vh)` cap.
+
 ## A gentler AI on Normal
 The smarter AI turned out too sharp on Normal, so how hard the rival
 defends and attacks now scales with difficulty (new `AI_LEVELS` fields):

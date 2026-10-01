@@ -445,10 +445,18 @@
        hidden as the source of truth, the suggestion list drops under the box. */
     .combo { position: relative; flex: 1; min-width: 0; display: flex; }
     .combo-native { display: none; }
+    /* A caret so the box reads as a dropdown you can open and scroll, not
+       only a search field. */
+    .combo::after {
+      content: '▾'; position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      font-size: 12px; opacity: 0.7; pointer-events: none;
+    }
+    .combo-input { padding-right: 22px; }
     .combo-list {
       position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
       margin: 2px 0 0; padding: 0; list-style: none;
-      max-height: 240px; overflow-y: auto;
+      max-height: min(320px, 45vh); overflow-y: auto;
+      touch-action: pan-y; overscroll-behavior: contain;
       background: var(--panel); border: 3px solid #000;
     }
     /* The team box sits in the left column: let its list run wider than the

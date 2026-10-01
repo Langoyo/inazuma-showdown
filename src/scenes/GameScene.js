@@ -1909,7 +1909,10 @@ export default class GameScene extends Phaser.Scene {
     const norm=s=>s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
     // An era option only makes sense next to its team's name.
     const labelOf=o=>o.parentElement.tagName==='OPTGROUP'?`${o.parentElement.label} · ${o.textContent}`:o.textContent;
-    let shown=[], active=-1;
+    // `typed` is false when the list was opened by focusing or arrowing, so
+    // the box's text (the current pick) browses the whole list instead of
+    // filtering it down to itself; typing turns it into a search.
+    let shown=[], active=-1, typed=false;
     const setActive=i=>{
       active=i;
       [...list.children].forEach((li,j)=>li.classList.toggle('active',j===i));
@@ -1918,7 +1921,7 @@ export default class GameScene extends Phaser.Scene {
       else input.removeAttribute('aria-activedescendant');
     };
     const render=()=>{
-      const q=norm(input.value.trim());
+      const q=typed?norm(input.value.trim()):'';
       const opts=[...select.options].map(o=>({value:o.value,label:o.value?labelOf(o):o.textContent,disabled:o.disabled}));
       // "All …" leads the untouched list; once you type, only matches show —
       // names starting with what you typed first, then a word starting with
@@ -1929,15 +1932,23 @@ export default class GameScene extends Phaser.Scene {
         const li=document.createElement('li');
         li.id=`${listId}-${i}`; li.textContent=e.label; li.setAttribute('role','option');
         if(e.disabled){ li.classList.add('disabled'); li.setAttribute('aria-disabled','true'); }
-        // pointerdown + preventDefault keeps focus in the input, so picking
-        // doesn't first fire the blur that would close the list.
-        li.addEventListener('pointerdown',ev=>{ ev.preventDefault(); if(!e.disabled) pick(e); });
+        // Picks on click, not pointerdown: a finger that starts a scroll is
+        // never a click, so the list can be dragged without choosing a row.
+        li.addEventListener('click',()=>{ if(!e.disabled) pick(e); });
         return li;
       }));
       if(!shown.length){ const li=document.createElement('li'); li.className='combo-empty'; li.textContent='No matches'; list.appendChild(li); }
       setActive(-1);
     };
-    const open=()=>{ render(); list.hidden=false; input.setAttribute('aria-expanded','true'); };
+    const open=()=>{
+      render(); list.hidden=false; input.setAttribute('aria-expanded','true');
+      // Browsing: land on the current pick, centred, so you see where you
+      // are in a long list.
+      if(!typed&&select.value){
+        const i=shown.findIndex(e=>e.value===select.value);
+        if(i>=0){ setActive(i); const li=list.children[i]; list.scrollTop=li.offsetTop-(list.clientHeight-li.offsetHeight)/2; }
+      }
+    };
     const close=()=>{ list.hidden=true; input.setAttribute('aria-expanded','false'); setActive(-1); };
     const sync=()=>{ const o=select.selectedOptions[0]; input.value=o&&o.value?labelOf(o):''; };
     const pick=e=>{
@@ -1945,12 +1956,15 @@ export default class GameScene extends Phaser.Scene {
       if(select.value!==e.value){ select.value=e.value; select.dispatchEvent(new Event('change')); }
       sync();
     };
-    input.addEventListener('focus',()=>{ open(); input.select(); });
-    input.addEventListener('input',open);
+    // Pressing in the list (a row, or its scrollbar) must not pull focus off
+    // the input, or the blur below would close the list mid-scroll.
+    list.addEventListener('mousedown',ev=>ev.preventDefault());
+    input.addEventListener('focus',()=>{ typed=false; open(); input.select(); });
+    input.addEventListener('input',()=>{ typed=true; open(); });
     input.addEventListener('keydown',ev=>{
       if(ev.key==='ArrowDown'||ev.key==='ArrowUp'){
         ev.preventDefault();
-        if(list.hidden) open();
+        if(list.hidden){ typed=false; open(); }
         const step=ev.key==='ArrowDown'?1:-1;
         for(let i=active+step;i>=0&&i<shown.length;i+=step) if(!shown[i].disabled){ setActive(i); break; }
       } else if(ev.key==='Enter'){

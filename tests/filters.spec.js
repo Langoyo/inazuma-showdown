@@ -165,6 +165,49 @@ test.describe('linked Browse Players filters', () => {
     expect(suggestions.some((t) => t.includes(` · ${era} (`))).toBe(true);
   });
 
+  test('reopening a filled Team box browses every team, centred on the current pick', async ({ page }) => {
+    await openBrowse(page);
+    const team = await page.evaluate(() => {
+      const counts = new Map();
+      window.__scene.rosterAll.forEach((p) => { if (p.team) counts.set(p.team, (counts.get(p.team) || 0) + 1); });
+      const names = [...counts.keys()];
+      return names[Math.floor(names.length * 0.7)];
+    });
+    await choose(page, '#squad-team-filter', team);
+    const total = (await optionValues(page, 'squad-team-filter')).length;
+    await page.click('#squad-team-filter-input');
+    // Focus selects the text but doesn't turn it into a search: nothing is filtered out.
+    expect(await page.locator('#squad-team-filter-list li[role="option"]').count()).toBeGreaterThan(total);
+    const active = page.locator('#squad-team-filter-list li.active');
+    await expect(active).toHaveCount(1);
+    expect(await active.textContent()).toContain(team);
+    await expect(active).toBeInViewport();
+    // Typing still searches.
+    await page.fill('#squad-team-filter-input', 'zzz');
+    await expect(page.locator('#squad-team-filter-list .combo-empty')).toHaveText('No matches');
+  });
+
+  test('the suggestion list is long enough to scroll, and a mouse drag across rows never picks one', async ({ page }) => {
+    await openBrowse(page);
+    await page.click('#squad-team-filter-input');
+    const list = page.locator('#squad-team-filter-list');
+    const sizes = await list.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+    expect(sizes.scroll).toBeGreaterThan(sizes.client);
+    await list.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    expect(await list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    await list.evaluate((el) => { el.scrollTop = 0; });
+
+    // Pressing on one row and releasing on another is a drag, not a click.
+    const rows = page.locator('#squad-team-filter-list li[role="option"]');
+    const [a, b] = [await rows.nth(3).boundingBox(), await rows.nth(5).boundingBox()];
+    await page.mouse.move(a.x + 10, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + 10, b.y + b.height / 2, { steps: 4 });
+    await page.mouse.up();
+    expect(await page.inputValue('#squad-team-filter')).toBe('');
+    await expect(list).toBeVisible();
+  });
+
   test('keyboard: arrow down + Enter picks the first match, Escape puts back what was there', async ({ page }) => {
     await openBrowse(page);
     const game = (await optionValues(page, 'squad-game-filter'))[0];
@@ -213,5 +256,30 @@ test.describe('linked Browse Players filters', () => {
     await page.locator('#squad-search').click();
     expect(await page.inputValue('#squad-game-filter')).toBe('');
     expect(await page.inputValue('#squad-game-filter-input')).toBe('');
+  });
+});
+
+// A phone swipe on the suggestion list must scroll it, not choose the row the
+// finger landed on (rows used to pick on pointerdown).
+test.describe('touch scrolling of the suggestion list', () => {
+  test.use({ hasTouch: true });
+  test('swiping scrolls the Team list without picking a row or closing it', async ({ page }) => {
+    await openBrowse(page);
+    await page.locator('#squad-team-filter-input').tap();
+    const list = page.locator('#squad-team-filter-list');
+    await expect(list).toBeVisible();
+    // Raw touch events (synthesizeScrollGesture isn't delivered in headless
+    // Chromium): start on a row near the bottom and drag upwards.
+    const box = await list.boundingBox();
+    const x = box.x + box.width / 2;
+    let y = box.y + box.height - 30;
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map((yy) => ({ x, y: yy })) });
+    await touch('touchStart', [y]);
+    for (let i = 0; i < 12; i++) { y -= 8; await touch('touchMove', [y]); await page.waitForTimeout(16); }
+    await touch('touchEnd', []);
+    await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    expect(await page.inputValue('#squad-team-filter')).toBe('');
+    await expect(list).toBeVisible();
   });
 });
