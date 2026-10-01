@@ -4,6 +4,32 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Element effects for supertechniques, saves and goals
+A supertechnique used to show only a ring in the team's colour and its
+name. It now also bursts in the user's **element** (`ELEMENT_FX`):
+
+- 🔥 **Fire:** orange embers rising.
+- 🌿 **Wood:** green leaves drifting.
+- 💨 **Air:** fast blue-white streaks.
+- ⛰️ **Earth:** brown chunks thrown up that fall back down.
+
+Players with no known element get a neutral gold spark. Moves of power 95
+or more also shake the camera.
+
+A shot's technique stays hidden at the strike (the keeper picks blind),
+so its burst plays at the first face-off of the shot, whether a block or
+the keeper.
+
+Two more effects:
+- **Save:** the keeper gets a white-gold flash and a "SAVE!" pop.
+- **Goal:** confetti in the scorer's colours rains over the whole screen,
+  with a flash and a shake. It's screen-fixed because the camera recentres
+  on the kickoff at that same moment.
+
+Everything rides in the synced `confrontResult.fx`, so the client sees
+the same. `prefers-reduced-motion` turns off the shakes and flashes. The
+particles use a single 4px texture generated on first use.
+
 ## Match report and Rematch
 Full time used to show only the score, then reload to the menu after 9
 seconds. It now shows a **match report** and waits for you:

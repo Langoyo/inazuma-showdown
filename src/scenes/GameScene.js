@@ -235,6 +235,17 @@ const KEEPER_CHASE_RANGE = 130;
 const ELEMENT_BEATS = { Fire:'Wood', Wood:'Air', Air:'Earth', Earth:'Fire' };
 const ELEMENT_EDGE  = 1.15; // power multiplier for the favourable side
 const ELEMENT_ICON  = { Fire:'🔥', Wood:'🌿', Air:'💨', Earth:'⛰️' };
+// How each element's supertechnique bursts (see _playTechniqueFx): embers
+// rising for Fire, leaves drifting for Wood, fast streaks for Air, chunks
+// thrown up and falling for Earth. Plain Phaser emitter config.
+const ELEMENT_FX = {
+  Fire:  { tint:[0xff5a1f,0xffa62b,0xffe066], speed:{min:40,max:150},  angle:{min:235,max:305}, gravityY:-170, lifespan:750, scale:{start:1.7,end:0},   count:28 },
+  Wood:  { tint:[0x3fbf5f,0x8be36b,0x2e8b57], speed:{min:50,max:120},  angle:{min:0,max:360},   gravityY:40,   lifespan:950, scale:{start:1.5,end:0.5}, rotate:{min:0,max:360}, count:22 },
+  Air:   { tint:[0xffffff,0x9be7ff,0x29b6f6], speed:{min:230,max:380}, angle:{min:0,max:360},   gravityY:0,    lifespan:460, scale:{start:2.6,end:0.4}, count:36 },
+  Earth: { tint:[0x8b5a2b,0xb9875a,0x6b4423], speed:{min:110,max:220}, angle:{min:200,max:340}, gravityY:560,  lifespan:850, scale:{start:1.9,end:1},   count:20 },
+};
+const FX_NEUTRAL   = { tint:[0xfff176,0xffffff], speed:{min:80,max:180}, angle:{min:0,max:360}, gravityY:0, lifespan:550, scale:{start:1.6,end:0}, count:20 };
+const FX_BIG_POWER = 95; // a supertechnique this strong also shakes the camera
 // Raises each side's relevant stat to this power before the win-chance
 // ratio (see _prepareConfrontReveal) — stat differences on their own used to
 // barely move a duel: a median dribbler against a median defender (the
@@ -3611,7 +3622,7 @@ export default class GameScene extends Phaser.Scene {
     if(!seq){ this.confrontation=null; return; }
     const st=this._statsFor(c.attackerRole,c.attackerId), e=this._entryById(c.attackerRole,c.attackerId);
     const tech=st?this._tryTech(st,'shot',c.attackerChoice):null;
-    if(tech) this._stat(c.attackerRole,'techs');
+    if(tech){ this._stat(c.attackerRole,'techs'); seq.techMax=Math.max(seq.techMax||0,tech.power); }
     const name=st?.name||'';
     let title, fxTech=tech;
     if(c.type==='strike'){
@@ -3629,7 +3640,7 @@ export default class GameScene extends Phaser.Scene {
       if(e){ const p=this._posOf(e); seq.from={x:p.x,y:p.y}; }
       title=`${name} chains it with ${tech.name}!`;
     } else title=`${name} lets it run`;
-    const fx=fxTech&&e?{a:{x:this._posOf(e).x,y:this._posOf(e).y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:fxTech.name},d:null}:null;
+    const fx=fxTech&&e?{a:{x:this._posOf(e).x,y:this._posOf(e).y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:fxTech.name,el:st?.element||null,power:fxTech.power},d:null}:null;
     this.confrontResult={title,outcome:'',until:now+1200,outcomeAt:now+RESULT_DELAY_MS,fx};
     this.confrontation=null;
     seq.idx++;
@@ -3641,7 +3652,8 @@ export default class GameScene extends Phaser.Scene {
     this.confrontation=null; this.shotSeq=null;
     this._recordGoal(seq.aRole,seq.kickerId);
     this._onGoal(seq.aRole==='A'?'a':'b');
-    this.confrontResult={title:`⚽ GOAL! ${name} puts it ${how}! (${this.score.a} - ${this.score.b})`,outcome:'',until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS};
+    this.confrontResult={title:`⚽ GOAL! ${name} puts it ${how}! (${this.score.a} - ${this.score.b})`,outcome:'',until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS,
+      fx:{a:null,d:null,goal:{color:seq.aRole==='A'?this.teamColorA:this.teamColorB}}};
   }
   /** Where the AI aims: the spot in the goal mouth its keeper covers worst,
    *  steering clear of a blocker and toward a teammate who can chain —
@@ -3752,9 +3764,13 @@ export default class GameScene extends Phaser.Scene {
     // Visual flourish data for whoever actually used a supertechnique —
     // rendered identically on host and client from the synced result.
     const eAtk=this._entryById(c.attackerRole,c.attackerId), eDef=this._entryById(c.defenderRole,c.defenderId);
+    // A shot's own technique was kept hidden at the strike, so it bursts at
+    // the first face-off of the sequence (a block or the keeper), once.
+    const shotFx=seq&&!seq.fxShown&&aTN!=='Normal'&&eAtk;
+    if(shotFx) seq.fxShown=true;
     const fx={
-      a: aTech&&eAtk ? {x:eAtk.body.position.x,y:eAtk.body.position.y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:aTN} : null,
-      d: dTech&&eDef ? {x:eDef.body.position.x,y:eDef.body.position.y,color:c.defenderRole==='A'?this.teamColorA:this.teamColorB,name:dTN} : null
+      a: (aTech||shotFx)&&eAtk ? {x:eAtk.body.position.x,y:eAtk.body.position.y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:aTN,el:as.element||null,power:aTech?aTech.power:(seq?.techMax||0)} : null,
+      d: dTech&&eDef ? {x:eDef.body.position.x,y:eDef.body.position.y,color:c.defenderRole==='A'?this.teamColorA:this.teamColorB,name:dTN,el:ds.element||null,power:dTech.power} : null
     };
     c.pending={aWins,aTN,dTN,fx,aName:as.name,dName:ds.name};
     c.reveal={
@@ -3797,7 +3813,8 @@ export default class GameScene extends Phaser.Scene {
   _applyConfrontOutcome(now){
     const c=this.confrontation, r=c.pending;
     if(!r){ this.confrontation=null; return; }
-    const {aWins,aTN,dTN,fx,aName,dName}=r;
+    const {aWins,aTN,dTN,aName,dName}=r;
+    let fx=r.fx;
     let title,outcome=`${aName}: ${aTN} · ${dName}: ${dTN}`;
     if(c.type==='duel'){
       const eA=this._activeEntry(c.attackerRole), eD=this._activeEntry(c.defenderRole);
@@ -3832,6 +3849,7 @@ export default class GameScene extends Phaser.Scene {
       // this.score was just updated by _onGoal, so it already reflects
       // this goal — the banner shows the result, not just who scored.
       title=`⚽ GOAL! ${aName} scores! (${this.score.a} - ${this.score.b})`;
+      fx={...(fx||{}),goal:{color:c.attackerRole==='A'?this.teamColorA:this.teamColorB}};
     } else {
       // The keeper (defenderId here, not necessarily whoever was "active"
       // before the shot) made the save — the ball, and possession, are
@@ -3839,6 +3857,8 @@ export default class GameScene extends Phaser.Scene {
       this.possRole=c.defenderRole;
       this._setActive(c.defenderRole,c.defenderId);
       title=`${dName} saves it!`;
+      const eK=this._entryById(c.defenderRole,c.defenderId);
+      if(eK?.body) fx={...(fx||{}),save:{x:eK.body.position.x,y:eK.body.position.y}};
       this._stat(c.defenderRole,'saves',1,c.defenderId);
       playGkSave();
     }
@@ -4491,7 +4511,11 @@ export default class GameScene extends Phaser.Scene {
     if(result&&now<result.until){
       if(result.until!==this._lastFxUntil){
         this._lastFxUntil=result.until;
-        if(result.fx){ this._playTechniqueFx(result.fx.a); this._playTechniqueFx(result.fx.d); }
+        if(result.fx){
+          this._playTechniqueFx(result.fx.a); this._playTechniqueFx(result.fx.d);
+          if(result.fx.save) this._playSaveFx(result.fx.save);
+          if(result.fx.goal) this._playGoalFx(result.fx.goal);
+        }
         // Bring the restart into view — the ball could've gone in near
         // either goal line, off-screen from wherever the camera had
         // scrolled to follow play. Runs identically on host and client
@@ -4505,15 +4529,62 @@ export default class GameScene extends Phaser.Scene {
     } else el.style.display='none';
   }
 
-  /** Expanding colored ring + the technique's name floating up — a quick,
-   *  sprite-free flourish for when a player actually spends PT on a
-   *  supertechnique, shown at their position on both host and client. */
+  /** A 4px white square, tinted per particle — the only texture the
+   *  effects need, drawn once on first use. */
+  _fxTexture(){
+    if(!this.textures.exists('fx-px')){
+      const g=this.make.graphics({x:0,y:0},false);
+      g.fillStyle(0xffffff,1); g.fillRect(0,0,4,4); g.generateTexture('fx-px',4,4); g.destroy();
+    }
+    return 'fx-px';
+  }
+  _reducedMotion(){ return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; }
+  /** One-off particle burst; the emitter cleans itself up once the last
+   *  particle has faded. */
+  _burst(x,y,cfg,kind,{depth=8,fixed=false}={}){
+    const {count,...conf}=cfg;
+    const em=this.add.particles(x,y,this._fxTexture(),{...conf,alpha:{start:1,end:0},emitting:false}).setDepth(depth);
+    if(fixed) em.setScrollFactor(0);
+    em.explode(count);
+    this.time.delayedCall((conf.lifespan||800)+200,()=>em.destroy());
+    // Last few effects played, for tests (the visuals themselves can't be asserted on).
+    (this.fxLog??=[]).push(kind);
+    if(this.fxLog.length>30) this.fxLog.shift();
+    return em;
+  }
+  /** A supertechnique going off: a ring in the team's colour, a burst in the
+   *  player's element (see ELEMENT_FX), and the technique's name floating
+   *  up. The strongest moves also shake the camera. Shown on host and
+   *  client alike, from the synced result. */
   _playTechniqueFx(data){
     if(!data) return;
     const ring=this.add.circle(data.x,data.y,16,data.color,0).setStrokeStyle(5,data.color,1).setDepth(8).setScale(0.4).setAlpha(1);
     this.tweens.add({targets:ring,scale:3.2,alpha:0,duration:650,ease:'Cubic.Out',onComplete:()=>ring.destroy()});
+    this._burst(data.x,data.y,ELEMENT_FX[data.el]||FX_NEUTRAL,ELEMENT_FX[data.el]?data.el:'neutral');
+    if((data.power||0)>=FX_BIG_POWER&&!this._reducedMotion()) this.cameras.main.shake(220,0.006);
     const txt=this.add.text(data.x,data.y-26,data.name,{fontSize:'11px',fontStyle:'bold',color:'#fff176',stroke:'#000',strokeThickness:4,resolution:3}).setOrigin(0.5,1).setDepth(9);
     this.tweens.add({targets:txt,y:txt.y-24,alpha:0,duration:900,ease:'Cubic.Out',onComplete:()=>txt.destroy()});
+  }
+  /** The keeper holds it: a white-gold flash at their gloves and "SAVE!". */
+  _playSaveFx({x,y}){
+    const ring=this.add.circle(x,y,14,0xffffff,0).setStrokeStyle(6,0xffe066,1).setDepth(8).setScale(0.5);
+    this.tweens.add({targets:ring,scale:2.6,alpha:0,duration:520,ease:'Cubic.Out',onComplete:()=>ring.destroy()});
+    this._burst(x,y,{tint:[0xffffff,0xffe066],speed:{min:120,max:240},angle:{min:0,max:360},gravityY:0,lifespan:450,scale:{start:1.8,end:0},count:24},'save');
+    const txt=this.add.text(x,y-24,'SAVE!',{fontSize:'16px',fontStyle:'bold',color:'#ffffff',stroke:'#000',strokeThickness:5,resolution:3}).setOrigin(0.5,1).setDepth(9).setScale(0.6);
+    this.tweens.add({targets:txt,scale:1.1,y:txt.y-18,duration:260,ease:'Back.Out',onComplete:()=>this.tweens.add({targets:txt,alpha:0,delay:350,duration:300,onComplete:()=>txt.destroy()})});
+  }
+  /** A goal: confetti in the scorer's colour raining over the whole screen.
+   *  Screen-fixed rather than at the net, because the camera recentres on
+   *  the kickoff at this very moment (see _renderResultBanner). */
+  _playGoalFx({color}){
+    const w=this.VP_W;
+    const cfg={tint:[color,0xffffff,0xffe066],speed:{min:60,max:200},angle:{min:60,max:120},gravityY:260,lifespan:1600,scale:{start:2,end:1.2},rotate:{min:0,max:360},count:30};
+    for(const fx of [0.2,0.5,0.8]) this._burst(w*fx,-8,cfg,'goal',{depth:20,fixed:true});
+    if(!this._reducedMotion()){
+      const c=Phaser.Display.Color.IntegerToColor(color);
+      this.cameras.main.flash(180,c.red,c.green,c.blue);
+      this.cameras.main.shake(260,0.008);
+    }
   }
 
   /** The VS beat: two cards face off, then the winner's lights up and the
