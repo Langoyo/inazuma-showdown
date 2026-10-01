@@ -15,7 +15,8 @@ test.describe('imported roster', () => {
   test('a known player keeps its id, portrait and stats, with the new technique list on the game scale', () => {
     const axel = byId('vr-2');
     expect(axel).toMatchObject({ name: 'Axel Blaze', game: 'IE1', team: 'Raimon', element: 'Fire', image: '/player_images/2_axel_blaze_pixel.png' });
-    expect(axel.stats.kick).toBe(121);
+    // Level-99 stats (the database's level 50 was 121).
+    expect(axel.stats.kick).toBe(194);
     expect(techNames(axel)).toEqual(expect.arrayContaining(['Fire Tornado', 'Inazuma-1 Drop', 'The Ikaros']));
     const fireTornado = axel.techniquesExtra.find((t) => t.name === 'Fire Tornado');
     expect(fireTornado).toMatchObject({ category: 'shot', power: 82, cost: 21 });

@@ -19,7 +19,7 @@ test.describe('roster carries the games\' own seven stats', () => {
       for (const p of roster) {
         const vals = NATIVE.map((k) => p.stats[k]);
         if (vals.every((v) => Number.isInteger(v))) complete++;
-        if (vals.every((v) => v >= 50 && v <= 200)) inRange++;
+        if (vals.every((v) => v >= 100 && v <= 260)) inRange++;
         for (const v of vals) { if (v < min) min = v; if (v > max) max = v; }
       }
       return { total: roster.length, complete, inRange, min, max };
@@ -28,10 +28,10 @@ test.describe('roster carries the games\' own seven stats', () => {
     expect(result.total).toBeGreaterThan(5000);
     expect(result.complete).toBe(result.total);
     expect(result.inRange).toBe(result.total);
-    // Sanity that these really are the games' numbers and not a rescale:
-    // the dump spans roughly 80-121 across every stat.
-    expect(result.min).toBeGreaterThan(50);
-    expect(result.max).toBeLessThan(140);
+    // Sanity that these really are the games' level-99 numbers: they span
+    // roughly 128-194 across every stat (1.6× the level-50 80-121).
+    expect(result.min).toBeGreaterThan(110);
+    expect(result.max).toBeLessThan(220);
   });
 
   test('none of the five derived stats survive anywhere', async ({ page }) => {

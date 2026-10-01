@@ -116,6 +116,8 @@ const decode = (v) => typeof v === 'string'
   ? v.replace(/&amp;/g, '&').replace(/&#0?39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   : v;
 
+const LEVEL99 = 1.6;
+
 // ---- build ---------------------------------------------------------------------
 const NOT_A_TEAM = new Set(['Unaffiliated', 'Sub Character', 'Unknown', '']);
 const entries = chars.map((c) => ({
@@ -128,11 +130,14 @@ const entries = chars.map((c) => ({
     position: c.position,
     ...(c.role && c.role !== 'player' ? { role: c.role } : {}),
     game: GAME[c.game] || c.game,
-    stats: { ...c.baseStats50 },
+    // Level-99 numbers. The previous roster stored level 50, so matching
+    // against it uses stats50 below.
+    stats: { ...c.baseStats99 },
     ...techniquesOf(c),
     team: decode(c.team) || 'Unaffiliated',
     element: ELEMENT[c.element] || null,
   },
+  stats50: { ...c.baseStats50 },
   claimed: null, // the current entry it took over from
 }));
 
@@ -143,7 +148,7 @@ for (const e of entries) {
   (byKey.get(key(e.out.name, e.game)) || byKey.set(key(e.out.name, e.game), []).get(key(e.out.name, e.game))).push(e);
   (byName.get(e.out.name.toLowerCase()) || byName.set(e.out.name.toLowerCase(), []).get(e.out.name.toLowerCase())).push(e);
 }
-const sameStats = (p, e) => Object.keys(p.stats || {}).every((k) => p.stats[k] === e.out.stats[k]);
+const sameStats = (p, e) => Object.keys(p.stats || {}).every((k) => p.stats[k] === e.stats50[k]);
 function pick(p, cands) {
   const free = cands.filter((e) => !e.claimed);
   return free.find((e) => e.out.position === p.position && sameStats(p, e))
@@ -168,6 +173,9 @@ for (const p of old) {
 for (const p of old) {
   if (matchedOld.has(p)) continue;
   const { aliases, ...card } = p;
+  // The previous roster is level 50; the database's level 99 is 1.6× that
+  // for every stat (1.58–1.64 after its rounding), so kept cards scale the same.
+  card.stats = Object.fromEntries(Object.entries(card.stats).map(([k, v]) => [k, Math.round(v * LEVEL99)]));
   card.techniques = { shot: null, dribble: null, defense: null, keeper: null, ...(card.techniques || {}) };
   card.techniquesExtra = card.techniquesExtra || [];
   entries.push({ src: null, game: p.game, out: { ...card, ...(aliases?.length ? { aliases } : {}) }, claimed: p, kept: true });

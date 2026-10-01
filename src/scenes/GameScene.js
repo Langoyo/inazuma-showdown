@@ -298,7 +298,8 @@ const STAT_ABBR = { kick:'KCK', control:'CTL', technique:'TEC', pressure:'PRE', 
 // (kick 121) and the roster spreads out across ~86-116.
 // Every position's rating is centred on this, so 100 reads as "a typical
 // player for this job" whatever the job is (see _ratingBaseline).
-const RATING_CENTRE = 100;
+// In the stats' own units: 100 back when they were level 50, ×1.6 at level 99.
+const RATING_CENTRE = 160;
 const RATING_WEIGHTS = {
   GK: { intelligence:.55, pressure:.25, physical:.20 },
   DF: { pressure:.55, physical:.25, intelligence:.20 },
@@ -1621,13 +1622,13 @@ export default class GameScene extends Phaser.Scene {
   /** Overall rating chip for a pitch/bench pin — banded by strength so a
    *  squad's weak spots stand out without reading each number.
    *  Thresholds track the centred rating's actual spread (see
-   *  _ratingBaseline): every position sits on 100, so 103+ is a notably
-   *  good player for their job, 98-102 the broad middle, below that a
+   *  _ratingBaseline): every position sits on RATING_CENTRE (160), so 165+
+   *  is a notably good player for their job, 157-164 the broad middle, below that a
    *  weak one — and it means the same thing for a keeper as for a
    *  forward, which is the point of centring. */
   _ratingBadge(p){
     const r=this._playerRating(p);
-    const band=r>=103?'hi':r>=98?'mid':'low';
+    const band=r>=RATING_CENTRE+5?'hi':r>=RATING_CENTRE-3?'mid':'low';
     return `<span class="rating-badge rating-${band}">${r}</span>`;
   }
 

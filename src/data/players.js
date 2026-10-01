@@ -11,7 +11,7 @@
 // (stamina) stays fresh for longer before fatigue starts dragging on their
 // speed (see FATIGUE_* in GameScene, which drains `stamina` over match time).
 // The seven stats the games themselves show on a character's page, stored as
-// the raw game numbers (roughly 82-121) rather than anything of our own —
+// the raw game numbers at level 99 (roughly 130-195) rather than anything of our own —
 // so a stat sheet here reads the same as one there. We used to store five
 // stats of our own invention derived from these, which matched nothing a
 // player could look up and lost information on the way (two of the five
@@ -22,7 +22,8 @@ export const NATIVE_STATS = ['kick', 'control', 'technique', 'pressure', 'physic
  *  places that need an absolute scale use it (movement pace and foul
  *  likelihood); confrontations compare one side's stat against the other's,
  *  which is a ratio and so doesn't care what units both sides are in. */
-export const STAT_UNIT = 0.0105;
+// 0.0105 at level 50; level-99 stats are 1.6× those, so pace and fouls stay put.
+export const STAT_UNIT = 0.0105 / 1.6;
 export const statMul = (v) => v * STAT_UNIT;
 
 export function createPlayerStats(name = 'Player') {
@@ -31,13 +32,13 @@ export function createPlayerStats(name = 'Player') {
     element: null, // Fire / Wood / Air / Earth — see ELEMENT_BEATS in GameScene
     // Roughly the roster's own median, so a statless placeholder plays as an
     // unremarkable player rather than a broken one.
-    kick: 95,
-    control: 95,
-    technique: 95,
-    pressure: 95,
-    physical: 95,
-    agility: 95,
-    intelligence: 95,
+    kick: 152,
+    control: 152,
+    technique: 152,
+    pressure: 152,
+    physical: 152,
+    agility: 152,
+    intelligence: 152,
 
     maxSP: 100,
     sp: 100,

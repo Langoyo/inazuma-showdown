@@ -4,6 +4,27 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Level-99 stats
+Stats now show each character at **level 99** (the database's
+`baseStats99`) instead of level 50. Axel Blaze's Kick, for example, reads
+194 rather than 121.
+
+Level 99 is 1.6× level 50 for every stat (1.58–1.64 after the
+database's rounding). Cards kept from the previous roster only had level
+50, so they're scaled by the same 1.6.
+
+Because the rise is the same for everyone, the game plays exactly as
+before:
+- **Confrontations** compare one side's stats against the other's, which
+  is a ratio and doesn't care about units.
+- **Pace and fouls** are the only places that use a stat's absolute size,
+  through `STAT_UNIT`. It's divided by 1.6, so players run and foul as
+  they did.
+- **Ratings** stay in the stats' own units: centred on 160 instead of 100,
+  with bands at 165+ / 157–164.
+- **Tournaments:** the simulated results weigh a rating gap 1/1.6 as much,
+  so they come out as before.
+
 ## New character database: full teams, stats and supertechniques
 The roster is rebuilt from the complete character database (5,130
 characters), using the new **`scripts/import-characters.mjs`**. It's a dry
