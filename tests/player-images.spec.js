@@ -40,14 +40,17 @@ test.describe('portraits show up in the UI instead of colour+initials', () => {
   test('a search-list card shows the portrait as a background-image', async ({ page }) => {
     await waitForRosterLoaded(page);
     await page.click('button[data-view="players"]');
-    const withImage = await page.evaluate(() => window.__scene.rosterAll.find((p) => p.image));
-    await page.fill('#squad-search', withImage.nickname || withImage.name);
+    const withImage = await page.evaluate(() => window.__scene.rosterAll.find((p) => p.image?.startsWith('/')));
+    await page.fill('#squad-search', withImage.name);
     await page.waitForTimeout(200);
-    const av = page.locator('#squad-pick-list .pick-card .av').first();
-    const bg = await av.evaluate((el) => getComputedStyle(el).backgroundImage);
-    expect(bg).toContain(withImage.image.split('/').pop());
+    // The same name can match a few cards (one per game), in rating order —
+    // the one we picked is among them, wearing its own portrait.
+    const avs = page.locator('#squad-pick-list .pick-card .av');
+    const bgs = await avs.evaluateAll((els) => els.map((el) => ({ bg: getComputedStyle(el).backgroundImage, text: el.textContent.trim() })));
+    const mine = bgs.find((b) => b.bg.includes(withImage.image.split('/').pop()));
+    expect(mine).toBeTruthy();
     // No leftover initials text sitting on top of the portrait.
-    expect((await av.textContent()).trim()).toBe('');
+    expect(mine.text).toBe('');
   });
 
   test('a formation pin shows the portrait, keeping the pin token itself circular', async ({ page }) => {
@@ -60,7 +63,7 @@ test.describe('portraits show up in the UI instead of colour+initials', () => {
       avatarRadius: getComputedStyle(el.querySelector('.pin-avatar')).borderRadius,
     }));
     expect(shapes.pinRadius).toBe('50%'); // the pin token itself is still a circle
-    expect(shapes.avatarBg).toMatch(/player_images/); // the face inside it is a photo
+    expect(shapes.avatarBg).toMatch(/player_images|url\("https:/); // the face inside it is a picture
     expect(['0px', '']).toContain(shapes.avatarRadius); // square frame, not cropped to a circle
   });
 
@@ -83,9 +86,10 @@ test.describe('portraits show up in the UI instead of colour+initials', () => {
     await startMatch(page);
     await page.click('#sub-button');
     await page.waitForFunction(() => window.__scene.teamPanelOpen === true, { timeout: 2000 });
-    const pin = page.locator('#sub-list-inner .slot-pin[data-roster-id]').first();
-    const bg = await pin.locator('.pin-avatar').evaluate((el) => getComputedStyle(el).backgroundImage);
-    expect(bg).toMatch(/player_images/);
+    // Pixel portraits, or the official art for the few without one yet.
+    const bgs = await page.locator('#sub-list-inner .slot-pin[data-roster-id] .pin-avatar').evaluateAll((els) => els.map((el) => getComputedStyle(el).backgroundImage));
+    expect(bgs.length).toBeGreaterThan(0);
+    for (const bg of bgs) expect(bg).toMatch(/player_images|url\("https:/);
   });
 
   test('a duel card shows both players\' portraits', async ({ page }) => {

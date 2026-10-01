@@ -198,8 +198,9 @@ function poissonSample(lambda, rng) {
  *  goals, same shape as the confrontation odds elsewhere in the game. */
 export function simulateResult(strengthA, strengthB, rng = Math.random) {
   const diff = strengthA - strengthB;
-  const lambdaA = Math.min(4, Math.max(0.25, 1.3 + diff * 0.05));
-  const lambdaB = Math.min(4, Math.max(0.25, 1.3 - diff * 0.05));
+  // 0.05 a rating point at level-50 stats; ratings are 1.6× wider at level 99.
+  const lambdaA = Math.min(4, Math.max(0.25, 1.3 + diff * 0.05 / 1.6));
+  const lambdaB = Math.min(4, Math.max(0.25, 1.3 - diff * 0.05 / 1.6));
   return { scoreA: poissonSample(lambdaA, rng), scoreB: poissonSample(lambdaB, rng) };
 }
 

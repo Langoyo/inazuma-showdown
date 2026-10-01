@@ -8,24 +8,6 @@
       "Third": "#23688f"
     }
   },
-  "Royal": {
-    "kitColors": {
-      "Home": "#425e50",
-      "Home GK": "#d88038",
-      "Away": "#e5d5c5",
-      "Away GK": "#d88038",
-      "Third": "#ba390f"
-    }
-  },
-  "Umbrella": {
-    "kitColors": {
-      "Home": "#90b0c0",
-      "Home GK": "#e5d5c5",
-      "Away": "#97bc73",
-      "Away GK": "#262626",
-      "Third": "#40607a"
-    }
-  },
   "Occult": {
     "kitColors": {
       "Home": "#605880",
@@ -102,23 +84,6 @@
       "Third": "#d2effa"
     }
   },
-  "Cloister": {
-    "kitColors": {
-      "Home": "#eaa33d",
-      "Home GK": "#246c92",
-      "Away": "#bdd7eb",
-      "Away GK": "#e8e616",
-      "Third": "#ead2a1"
-    }
-  },
-  "CCC": {
-    "kitColors": {
-      "Home": "#f9a9d4",
-      "Home GK": "#323232",
-      "Away": "#377dcd",
-      "Away GK": "#56e95b"
-    }
-  },
   "Fauxshore": {
     "kitColors": {
       "Home": "#60a8e0",
@@ -146,15 +111,6 @@
       "Third GK": "#4a6a99"
     }
   },
-  "Chaos": {
-    "kitColors": {
-      "Home": "#d82818",
-      "Home GK": "#e5d5c5",
-      "Away": "#e5d5c5",
-      "Away GK": "#5e595b",
-      "Third": "#2870a0"
-    }
-  },
   "Inazuma Eleven": {
     "kitColors": {
       "Home": "#594a66",
@@ -170,14 +126,6 @@
       "Home GK": "#c86000",
       "Away": "#e5d5c5",
       "Away GK": "#404048"
-    }
-  },
-  "Inazuma KFC": {
-    "kitColors": {
-      "Home": "#c51919",
-      "Home GK": "#215a7b",
-      "Away": "#e5d5c5",
-      "Away GK": "#262626"
     }
   },
   "Wrong Crowd": {
@@ -260,14 +208,6 @@
       "Third": "#39298c"
     }
   },
-  "Knights of Queen": {
-    "kitColors": {
-      "Home": "#e5d5c5",
-      "Home GK": "#254881",
-      "Away": "#c2181f",
-      "Away GK": "#262626"
-    }
-  },
   "The Empire": {
     "kitColors": {
       "Home": "#84accf",
@@ -331,13 +271,6 @@
       "Home GK": "#4a5a5a",
       "Away": "#4a5a5a",
       "Away GK": "#5aa584"
-    }
-  },
-  "The Great Horn": {
-    "kitColors": {
-      "Home": "#007048",
-      "Home GK": "#ac2117",
-      "Away": "#dfad11"
     }
   },
   "Dark Angels": {
@@ -1841,6 +1774,33 @@
       "Away": "#b2346f",
       "Away GK": "#b2346f",
       "Third": "#b2346f"
+    }
+  },
+  "Royal Academy": {
+    "kitColors": {
+      "Home": "#425e50",
+      "Home GK": "#d88038",
+      "Away": "#e5d5c5",
+      "Away GK": "#d88038",
+      "Third": "#ba390f"
+    }
+  },
+  "Umbrella MS": {
+    "kitColors": {
+      "Home": "#90b0c0",
+      "Home GK": "#e5d5c5",
+      "Away": "#97bc73",
+      "Away GK": "#262626",
+      "Third": "#40607a"
+    }
+  },
+  "Cloister Divinity": {
+    "kitColors": {
+      "Home": "#eaa33d",
+      "Home GK": "#246c92",
+      "Away": "#bdd7eb",
+      "Away GK": "#e8e616",
+      "Third": "#ead2a1"
     }
   }
 }
