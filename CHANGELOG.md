@@ -4,6 +4,30 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Career record in the profile, and tournament top scorers
+The profile now keeps a **career record** alongside your name and squads,
+shown under "Career" in the profile section. For example:
+"20 played · 12W 3D 5L · 41–22 goals · 🏆 2 · 📖 1", plus your top 3
+scorers.
+
+- **What's tracked:** played, won/drawn/lost, goals for and against,
+  tournaments won, story runs completed, and goals per player (your side
+  only, taken from the match report).
+- **When it's recorded:** `_showFullTime` records every match in every
+  mode. In multiplayer each browser records its own side.
+- **In the file:** it goes into the downloaded profile automatically.
+  `_cleanRecord` treats it like the rest of the file: numbers are whole,
+  non-negative and capped, scorers are trimmed to the top 100, and an
+  older file without a record starts at zero.
+- **On import:** records can't be added together, since re-importing
+  your own backup would double it. So the record with more matches behind
+  it wins.
+
+**Tournaments** now also keep your top scorers ("⚽ Your top scorers"
+under the bracket or table). Only your own fixtures count, because the
+others are simulated and have no scorers. Winning a tournament adds a 🏆
+to the career record.
+
 ## Element effects for supertechniques, saves and goals
 A supertechnique used to show only a ring in the team's colour and its
 name. It now also bursts in the user's **element** (`ELEMENT_FX`):

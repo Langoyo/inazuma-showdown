@@ -1177,7 +1177,41 @@ export default class GameScene extends Phaser.Scene {
       bench:ids(s?.bench,20).filter(x=>x!=null),
       savedAt:Number.isFinite(s?.savedAt)?s.savedAt:Date.now()
     }));
-    return {format:'inazuma-profile',version:1,playerName:str(raw?.playerName,24),squads};
+    return {format:'inazuma-profile',version:1,playerName:str(raw?.playerName,24),squads,record:this._cleanRecord(raw?.record)};
+  }
+  /** Career totals kept in the profile. Same distrust as the rest of the
+   *  file: whole, non-negative, capped numbers; scorers trimmed to the
+   *  top 100; an older file without a record just starts from zero. */
+  _cleanRecord(raw){
+    const r=raw&&typeof raw==='object'?raw:{};
+    const nat=v=>Number.isFinite(v)?Math.max(0,Math.min(1e6,Math.floor(v))):0;
+    const scorers=Object.fromEntries(Object.entries(r.scorers&&typeof r.scorers==='object'?r.scorers:{})
+      .filter(([id,n])=>id.length<=40&&nat(n)>0).map(([id,n])=>[id,nat(n)]).sort((a,b)=>b[1]-a[1]).slice(0,100));
+    const stories=Array.isArray(r.storiesCompleted)?[...new Set(r.storiesCompleted.filter(x=>typeof x==='string'&&x.length<=24))].slice(0,30):[];
+    return {played:nat(r.played),won:nat(r.won),drawn:nat(r.drawn),lost:nat(r.lost),goalsFor:nat(r.goalsFor),goalsAgainst:nat(r.goalsAgainst),
+      tournamentsWon:nat(r.tournamentsWon),storiesCompleted:stories,scorers};
+  }
+  /** One finished match into the career record — each browser records its
+   *  own side, so both players of a multiplayer match get theirs. */
+  _profileRecordMatch(mine,theirs,scorerIds){
+    const profile=this._readProfile(), r=profile.record;
+    r.played++; r.goalsFor+=mine; r.goalsAgainst+=theirs;
+    if(mine>theirs) r.won++; else if(mine<theirs) r.lost++; else r.drawn++;
+    scorerIds.forEach(id=>{ r.scorers[id]=(r.scorers[id]||0)+1; });
+    this._writeProfile(this._cleanProfile(profile));
+    this._renderProfile();
+  }
+  _profileRecordTrophy(kind,runId){
+    const profile=this._readProfile(), r=profile.record;
+    if(kind==='tournament') r.tournamentsWon++;
+    else if(kind==='story'&&!r.storiesCompleted.includes(runId)) r.storiesCompleted.push(runId);
+    this._writeProfile(this._cleanProfile(profile));
+    this._renderProfile();
+  }
+  /** "Name (n)" for the top few of a {playerId: goals} tally, best first. */
+  _topScorersText(scorers,n=3){
+    return Object.entries(scorers||{}).sort((a,b)=>b[1]-a[1]).slice(0,n)
+      .map(([id,g])=>`${getPlayerById(id)?.name||'?'} (${g})`).join(', ');
   }
   _readProfile(){
     try{ return this._cleanProfile(JSON.parse(localStorage.getItem(this._profileKey())||'null')); }
@@ -1214,7 +1248,14 @@ export default class GameScene extends Phaser.Scene {
   _renderProfile(){
     const list=document.getElementById('profile-squads');
     list.replaceChildren();
-    const {squads}=this._readProfile();
+    const {squads,record:r}=this._readProfile();
+    const recEl=document.getElementById('profile-record');
+    if(r.played){
+      const trophies=[r.tournamentsWon&&`🏆 ${r.tournamentsWon}`,r.storiesCompleted.length&&`📖 ${r.storiesCompleted.length}`].filter(Boolean).join(' · ');
+      recEl.textContent=`${r.played} played · ${r.won}W ${r.drawn}D ${r.lost}L · ${r.goalsFor}–${r.goalsAgainst} goals${trophies?` · ${trophies}`:''}`;
+      const top=this._topScorersText(r.scorers);
+      if(top){ const t=document.createElement('div'); t.className='profile-top-scorers'; t.textContent=`Top scorers: ${top}`; recEl.appendChild(t); }
+    } else recEl.textContent='No matches played yet.';
     if(!squads.length){
       const empty=document.createElement('div');
       empty.className='profile-empty';
@@ -1322,6 +1363,9 @@ export default class GameScene extends Phaser.Scene {
     }
     const profile=this._readProfile();
     if(incoming.playerName) profile.playerName=incoming.playerName;
+    // Records can't be added together (re-importing your own backup would
+    // double it), so the one with more matches behind it wins.
+    if(incoming.record.played>profile.record.played) profile.record=incoming.record;
     incoming.squads.forEach(s=>{
       const i=profile.squads.findIndex(x=>x.name.toLowerCase()===s.name.toLowerCase());
       if(i>=0) profile.squads[i]={...s,id:profile.squads[i].id};
@@ -2318,7 +2362,7 @@ export default class GameScene extends Phaser.Scene {
   /** Called from _showFullTime right after a tournament fixture's score is
    *  known. myGoals/oppGoals are already normalised for which network role
    *  was "me" — see _showFullTime's own mine/theirs. */
-  _recordTournamentResult(pending,myGoals,oppGoals){
+  _recordTournamentResult(pending,myGoals,oppGoals,scorerIds=[]){
     const scoreA=pending.a==='me'?myGoals:oppGoals;
     const scoreB=pending.b==='me'?myGoals:oppGoals;
     const updated=pending.kind==='knockout'
@@ -2327,10 +2371,15 @@ export default class GameScene extends Phaser.Scene {
     // recordKnockoutResult/recordLeagueResult/advanceAuto all update the
     // tournament by spreading {...t, ...changes} — mySquad rides along
     // through every one of those untouched, no need to re-attach it here.
-    const res=advanceAuto(updated,'me',id=>this._entrantStrength(id));
+    // Your own goals only — the other fixtures are simulated, with no scorers.
+    const scorers={...(this.activeTournament.scorers||{})};
+    scorerIds.forEach(id=>{ scorers[id]=(scorers[id]||0)+1; });
+    const res=advanceAuto({...updated,scorers},'me',id=>this._entrantStrength(id));
     this.activeTournament=res.tournament;
     saveTournament(this.activeTournament);
     this._tournamentPendingFixture=null;
+    const t=this.activeTournament;
+    if(t.completedAt&&(t.type==='knockout'?t.champion:leagueStandings(t)[0]?.id)==='me') this._profileRecordTrophy('tournament');
   }
   _renderTournamentPanel(){
     const body=document.getElementById('tournament-body');
@@ -2396,7 +2445,9 @@ export default class GameScene extends Phaser.Scene {
         <button class="nes-btn is-primary" style="margin-top:8px;" data-tournament-action="end">New tournament</button>`;
     }
     const abandonHtml=t.completedAt?'':`<div style="margin-top:10px;"><button class="nes-btn is-error is-compact" data-tournament-action="end">Abandon tournament</button></div>`;
-    body.innerHTML=`<div style="max-width:640px;width:100%;">${bodyHtml}${actionHtml}${abandonHtml}</div>`;
+    const top=this._topScorersText(t.scorers,5);
+    const scorersHtml=top?`<div id="tournament-scorers" style="margin-top:12px;font-size:12px;">⚽ Your top scorers: ${escHtml(top)}</div>`:'';
+    body.innerHTML=`<div style="max-width:640px;width:100%;">${bodyHtml}${scorersHtml}${actionHtml}${abandonHtml}</div>`;
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -4179,15 +4230,18 @@ export default class GameScene extends Phaser.Scene {
     const [a,b]=scoreTxt.split('-').map(n=>parseInt(n,10)||0);
     const mine=this.role==='A'?a:b, theirs=this.role==='A'?b:a;
     const inTournament=!!this._tournamentPendingFixture;
+    const report=this.role==='A'?this._matchReport():this.remoteState?.report;
+    const myScorers=(report?.goals||[]).filter(g=>g.role===this.role).map(g=>g.id);
     // Tournaments are offline-only (the fixture is set up locally, from the
     // rival slot) and the pending fixture is only ever set on the host side
     // (see _playTournamentFixture) — recorded here, before any reload, since
     // nothing in memory survives it.
-    if(this._tournamentPendingFixture&&this.role==='A') this._recordTournamentResult(this._tournamentPendingFixture,mine,theirs);
+    if(this._tournamentPendingFixture&&this.role==='A') this._recordTournamentResult(this._tournamentPendingFixture,mine,theirs,myScorers);
+    this._profileRecordMatch(mine,theirs,myScorers);
     document.getElementById('fulltime-score').textContent=scoreTxt;
     const ot=(this.role==='A'?this.matchClock:this.remoteState?.clock)?.overtime?' in overtime':'';
     document.getElementById('fulltime-verdict').textContent=mine>theirs?`You win${ot}!`:mine<theirs?`You lose${ot}`:'Draw';
-    this._renderMatchReport(this.role==='A'?this._matchReport():this.remoteState?.report);
+    this._renderMatchReport(report);
     const multi=this.uiMode==='multiplayer'||this.net.hasPeer();
     const rematch=document.getElementById('fulltime-rematch-btn');
     const cont=document.getElementById('fulltime-continue-btn');
