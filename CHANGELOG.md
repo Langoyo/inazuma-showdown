@@ -4,6 +4,17 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Merge with main: the offside freeze reaches the guest
+- The keeper/offside/stamina/technique-element work from #27 and the new
+  portraits from #28 are merged into the multiplayer branch.
+- **Offside in multiplayer.** #27's offside freezes play for 1.5s, but the
+  host stopped sending state while play was frozen. The guest would have
+  seen neither the 🚩 banner nor the attackers dropping back until play
+  resumed, then everything at once.
+  - The state broadcast is now its own `_sendHostState`, also called from
+    the paused branch. The team-panel pause gets the same live state.
+- Test: `networking.spec.js`, "an offside freeze keeps sending state".
+
 ## Multiplayer: a more responsive guest
 Two-device play worked, but the guest felt laggy. Everything goes through
 Trystero's reliable, ordered data channel, which holds new messages back
@@ -122,6 +133,92 @@ screens** (`_renderNetStatus`):
 - **Route log.** Once connected, the console logs which route won:
   `[net] connected via host → host` (same network), `srflx` (through the
   NAT) or `relay` (TURN).
+
+## Every card on a pixel portrait
+- The 152 cards that were still on official art (mostly managers, coaches
+  and characters new with the database import) now use the pixel portraits
+  added in #28.
+- `scripts/import-characters.mjs` prefers a local portrait for any card
+  with no image or a remote one. It looks for
+  `public/player_images/<id>_<slug>_pixel.png`, the names the download
+  script gives, plus `_pixel`. New portraits dropped in that folder are
+  picked up by re-running the import.
+- All 5,269 cards are on local portraits now, and none load from the
+  remote server. The avatar code still falls back to remote art and
+  initials for a card without one.
+- Tests: `roster-import.spec.js` checks every card's image exists
+  locally; `player-images.spec.js` expects only local portraits.
+
+## Technique elements, stamina scaled to match length, mouse-wheel camera
+- **Every technique has its own element** (its type in the new database):
+  - Fire, Wind → Air, Forest → Wood and Mountain → Earth, plus **Void**,
+    which is neutral: it beats nothing and nothing beats it.
+  - `scripts/import-characters.mjs` now writes `element` on every main
+    and extra technique (all but 8 of ~35k). Kept cards from the old roster
+    get it by technique name.
+- **The move's element decides the elemental edge, not the player's.**
+  - A technique brings its own: Axel's Inazuma-1 Drop is Air whatever
+    Axel is. A normal action uses the player's element, as before.
+  - A shot carries the element of its latest technique (strike or chain)
+    to the block and the keeper (`_moveElement`, `shotSeq.el`).
+  - The VS cards, the burst effects and the edge all use it.
+- **Shown on the cards:**
+  - Each technique button shows its element ("🔥 Fire · 21 PT").
+  - The duel panel shows both players' own elements side by side:
+    "You 💨 Air VS ⛰️ Earth <rival>". Facing a shot, the rival is the
+    shooter; lining one up, the keeper.
+  - The player stat sheet tags each technique with its element.
+- **Stamina is proportional to the match length.**
+  - The running drain and the duel costs were tuned for 3-minute halves.
+  - Both now scale by `HALF_S / halfLengthS` (`_staminaScale`). A
+    6-minute half drains half as much per second and per duel, and a
+    2-minute half 1.5×, so a player tires over a match the same way
+    whatever its length.
+- **The mouse wheel pans the pitch camera.**
+  - Vertical scroll moves it up and down the pitch; horizontal scroll or
+    Shift + wheel moves it sideways (`_wheelScroll`).
+  - It only applies over the pitch, so the panels keep their own
+    scrolling. It also stops a post-goal recentre that's in progress.
+- Tests: `tests/technique-elements.spec.js`; `technique-fx.spec.js` now
+  expects the technique's element.
+
+## Keeper positioning, team colours on duel cards, offside restart, stamina, and a choosier Hard AI
+- **The keeper stands between the ball and the goal.**
+  - Instead of sliding at most 42px along the line (a third of the ball's
+    sideways move), the keeper takes a spot on the line from the middle of
+    their goal to the ball.
+  - **Depth:** 45px off the line with the ball close, up to 80px when it's
+    far, about where they stood before.
+  - **Sideways:** the whole goal mouth. An attacker going wide now pulls
+    the keeper across to the near post instead of leaving them in the
+    middle (`KEEPER_OUT_*`, `_formPos`). Restarts still use the formation
+    spot.
+- **Duel cards show each side's team colour** as a band across the top
+  (`reveal.a/d.color`, so the client sees it too). The loser's card still
+  greys out, but its band keeps its colour.
+- **Offside:**
+  - Play freezes for 1.5s with the flag shown.
+  - Everyone on the offside side who was ahead of the ball restarts 40px
+    behind it, in their own lane (`OFFSIDE_PAUSE_MS`,
+    `OFFSIDE_PUSHBACK`).
+  - Banners raised while play is frozen are now drawn during the freeze.
+- **Stamina:**
+  - Running drains 0.35× what it did, so an average player now ends a
+    match with about two-thirds of the tank, not empty.
+  - Duels take their own toll: 4% of the winner's tank, 7% of the
+    loser's, plus 2% for whoever used a supertechnique
+    (`DUEL_STAMINA_*`).
+  - A busy midfielder ends tired, and a quiet one stays fresh.
+- **Hard and Expert pick their shots.**
+  - They used to shoot almost the moment they crossed their range (530 /
+    620px), with a 0.90 / 0.97 chance every frame.
+  - Now they only shoot when the shot is worth it (`shotGate`,
+    `_aiShouldShoot`): close in (250 / 270px), when their best aim
+    leaves the keeper half a chance or less, or when a defender is about
+    to take the ball. Otherwise they keep driving at goal or pass.
+  - To keep them hard, their range is shorter (470 / 520) and they defend
+    a notch tighter (press 245 / 275, marking 0.65 / 0.75). Easy and
+    Normal are unchanged.
 
 ## Level-99 stats
 Stats now show each character at **level 99** (the database's

@@ -124,15 +124,24 @@ test.describe('shooting: tap, then pick the spot and the shot', () => {
 });
 
 test.describe('keeper position and reach', () => {
-  test('the keeper slides along the line toward the ball, within the goal', async ({ page }) => {
+  test('the keeper stands between the ball and the middle of the goal, across to the near post', async ({ page }) => {
     await setup(page);
     const r = await page.evaluate(() => {
       const s = window.__scene;
-      return { right: s._formPos('B', 0, { x: 900, y: 500 }).x, left: s._formPos('B', 0, { x: 60, y: 500 }).x, mid: s._formPos('B', 0, { x: 480, y: 500 }).x };
+      const at = (x, y) => s._formPos('B', 0, { x, y });
+      return { right: at(900, 500), left: at(60, 500), mid: at(480, 500), angled: at(640, 600), byline: at(940, 40) };
     });
-    expect(r.mid).toBe(480);
-    expect(r.right).toBeGreaterThan(480); expect(r.right).toBeLessThanOrEqual(480 + 42);
-    expect(r.left).toBeLessThan(480); expect(r.left).toBeGreaterThanOrEqual(480 - 42);
+    // B defends the goal on y=0, centred on x=480, posts at ±70.
+    expect(r.mid.x).toBe(480);
+    // A wide ball pulls the keeper well across (the old slide stopped at ±42).
+    expect(r.right.x).toBeGreaterThan(480 + 42); expect(r.right.x).toBeLessThanOrEqual(480 + 62);
+    expect(r.left.x).toBeLessThan(480 - 42); expect(r.left.x).toBeGreaterThanOrEqual(480 - 62);
+    // Unclamped, the keeper sits right on the goal-centre → ball line.
+    const cross = (r.angled.x - 480) * 600 - r.angled.y * (640 - 480);
+    expect(Math.abs(cross)).toBeLessThan(1);
+    // Ball level with the byline: across toward the near post, still in front of the line.
+    expect(r.byline.x).toBeGreaterThan(480 + 42); expect(r.byline.x).toBeLessThanOrEqual(480 + 62);
+    expect(r.byline.y).toBeGreaterThan(0);
   });
 
   test('a shot at the keeper is fully covered, the far corner less so, and a keeper you have gone past not at all', async ({ page }) => {

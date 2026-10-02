@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { waitForRosterLoaded, startMatch } from './helpers.js';
 
-// Supertechniques burst in their user's element, keepers get a save flash,
+// Supertechniques burst in their own element, keepers get a save flash,
 // goals rain confetti. The pixels can't be asserted on, so these check the
 // synced fx data and the scene's own log of which effects played.
 
@@ -21,7 +21,7 @@ test.describe('technique effects', () => {
     await page.waitForFunction(() => window.__scene.children.list.filter((o) => o.type === 'ParticleEmitter').length === 0, { timeout: 5000 });
   });
 
-  test('a supertechnique in a duel carries its user\'s element and power to the effect', async ({ page }) => {
+  test('a supertechnique in a duel carries its own element and power to the effect', async ({ page }) => {
     await waitForRosterLoaded(page);
     await startMatch(page);
     const r = await page.evaluate(() => {
@@ -32,7 +32,8 @@ test.describe('technique effects', () => {
       const d = s.teamB[5];
       s.confrontation = { type: 'duel', attackerRole: 'A', defenderRole: 'B', attackerId: a.id, defenderId: d.id, attackerChoice: s._bestTechChoice(st, 'dribble'), defenderChoice: 'normal' };
       s._prepareConfrontReveal(s.time.now);
-      return { fx: s.confrontation.pending.fx.a, element: st.element || null };
+      const tech = s._tryTech({ ...st, sp: 999 }, 'dribble', s._bestTechChoice({ ...st, sp: 999 }, 'dribble'));
+      return { fx: s.confrontation.pending.fx.a, element: tech?.element || null };
     });
     expect(r).not.toBeNull();
     expect(r.fx.el).toBe(r.element);

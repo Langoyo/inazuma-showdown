@@ -64,6 +64,10 @@ const ELEMENT = { fire: 'Fire', wood: 'Wood', wind: 'Air', earth: 'Earth' };
 // mix-max, totems and modes are left out.
 const CATEGORY = { SHOT: 'shot', DRIB: 'dribble', DEFF: 'defense', KEEP: 'keeper' };
 const CATS = ['shot', 'dribble', 'defense', 'keeper'];
+// Each technique's own element, which needn't be its user's (Axel's
+// Inazuma Drop is Wind). Void is kept as a label but is neutral: no
+// elemental edge either way (see ELEMENT_BEATS in GameScene).
+const TECH_ELEMENT = { Fire: 'Fire', Wind: 'Air', Forest: 'Wood', Mountain: 'Earth', Void: 'Void' };
 // The source's power tiers onto the game's own power/PT-cost scale — the
 // exact pairs the previous import used for the same techniques.
 const PW = [[30, 61, 10], [45, 71, 16], [50, 75, 18], [60, 82, 21], [70, 89, 24], [85, 99, 30], [100, 110, 35]];
@@ -89,17 +93,17 @@ function techniquesOf(c) {
     const key = `${category}:${decode(h.name)}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    all.push({ name: decode(h.name), category, ...scale(h.pw), level: h.level ?? 99 });
+    all.push({ name: decode(h.name), category, ...scale(h.pw), level: h.level ?? 99, el: TECH_ELEMENT[h.element] ?? null });
   }
   const techniques = Object.fromEntries(CATS.map((k) => [k, null]));
   for (const k of CATS) {
     const best = all.filter((t) => t.category === k).sort((a, b) => b.power - a.power || a.level - b.level)[0];
-    if (best) techniques[k] = { name: best.name, cost: best.cost, power: best.power };
+    if (best) techniques[k] = { name: best.name, cost: best.cost, power: best.power, ...(best.el ? { element: best.el } : {}) };
   }
   const techniquesExtra = all
     .filter((t) => techniques[t.category]?.name !== t.name)
     .sort((a, b) => a.level - b.level)
-    .map(({ name, category, power, cost }) => ({ name, category, power, cost }));
+    .map(({ name, category, power, cost, el }) => ({ name, category, power, cost, ...(el ? { element: el } : {}) }));
   return { techniques, techniquesExtra };
 }
 
@@ -119,6 +123,12 @@ const decode = (v) => typeof v === 'string'
 const LEVEL99 = 1.6;
 
 // ---- build ---------------------------------------------------------------------
+const techElementByName = new Map();
+for (const c of chars) for (const h of c.hissatsusEn || []) {
+  const el = TECH_ELEMENT[h.element];
+  if (h.name && el && !techElementByName.has(decode(h.name))) techElementByName.set(decode(h.name), el);
+}
+
 const NOT_A_TEAM = new Set(['Unaffiliated', 'Sub Character', 'Unknown', '']);
 const entries = chars.map((c) => ({
   src: c,
@@ -178,6 +188,11 @@ for (const p of old) {
   card.stats = Object.fromEntries(Object.entries(card.stats).map(([k, v]) => [k, Math.round(v * LEVEL99)]));
   card.techniques = { shot: null, dribble: null, defense: null, keeper: null, ...(card.techniques || {}) };
   card.techniquesExtra = card.techniquesExtra || [];
+  // Kept cards come from the previous roster, which had no technique
+  // elements: take them from the same technique in the database by name.
+  const withEl = (t) => (t && !t.element && techElementByName.get(t.name) ? { ...t, element: techElementByName.get(t.name) } : t);
+  card.techniques = Object.fromEntries(Object.entries(card.techniques).map(([k, t]) => [k, withEl(t)]));
+  card.techniquesExtra = card.techniquesExtra.map(withEl);
   entries.push({ src: null, game: p.game, out: { ...card, ...(aliases?.length ? { aliases } : {}) }, claimed: p, kept: true });
   kept.push(`${p.id} ${p.name} [${p.game}, ${p.team}]`);
 }
@@ -281,8 +296,9 @@ for (const [k, es] of groups) {
       const tk = `${t.category}:${t.name}`;
       if (seen.has(tk)) continue;
       seen.add(tk);
-      if (!keep.out.techniques[t.category]) keep.out.techniques[t.category] = { name: t.name, cost: t.cost, power: t.power };
-      else keep.out.techniquesExtra.push({ name: t.name, category: t.category, power: t.power, cost: t.cost });
+      const el = t.element ? { element: t.element } : {};
+      if (!keep.out.techniques[t.category]) keep.out.techniques[t.category] = { name: t.name, cost: t.cost, power: t.power, ...el };
+      else keep.out.techniquesExtra.push({ name: t.name, category: t.category, power: t.power, cost: t.cost, ...el });
     }
     if (!keep.out.image && r.out.image) keep.out.image = r.out.image;
   }
@@ -292,6 +308,29 @@ for (const [k, es] of groups) {
 }
 
 const out = entries.filter((e) => !drop.has(e)).map((e) => e.out);
+
+// ---- local portraits ---------------------------------------------------------------
+// A card the database only has official art for (an http URL) uses a pixel
+// portrait instead once one is in public/player_images, named
+// <id>_<slug>_pixel.png - the names download-portraits.mjs gives the
+// originals, plus "_pixel". Dropping new ones in and re-running the import
+// picks them up; cards already on a local portrait are left alone.
+const IMAGES_DIR = path.join(ROOT, 'public/player_images');
+const imageFiles = fs.existsSync(IMAGES_DIR) ? fs.readdirSync(IMAGES_DIR) : [];
+const imageSet = new Set(imageFiles);
+const slug = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+function localPortrait(p) {
+  const exact = `${p.id}_${slug(p.name)}_pixel.png`;
+  if (imageSet.has(exact)) return `/player_images/${exact}`;
+  const any = imageFiles.find((f) => f.startsWith(`${p.id}_`) && f.endsWith('_pixel.png'));
+  return any ? `/player_images/${any}` : null;
+}
+for (const p of out) {
+  if (p.image && !/^https?:\/\//.test(p.image)) continue;
+  const local = localPortrait(p);
+  if (local) p.image = local;
+}
 const ids = new Set();
 for (const p of out) { if (ids.has(p.id)) throw new Error(`duplicate id ${p.id}`); ids.add(p.id); }
 

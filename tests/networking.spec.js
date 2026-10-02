@@ -411,6 +411,21 @@ test.describe('guest responsiveness', () => {
     expect(r.after).toBeNull();
   });
 
+  test('host: an offside freeze keeps sending state, so the guest sees the flag and the drop-back during it', async ({ page }) => {
+    await hostMatch(page);
+    const r = await page.evaluate(async () => {
+      const s = window.__scene;
+      s._commitOffside('A', s.time.now);
+      s.__states = [];
+      await new Promise((res) => setTimeout(res, 600));
+      const st = s.__states.filter((d) => d.matchStarted);
+      return { paused: s.paused, count: st.length, banner: st.some((d) => d.confrontResult?.title?.toLowerCase().includes('offside')) };
+    });
+    expect(r.paused).toBe(true); // still inside the 1.5s freeze
+    expect(r.count).toBeGreaterThan(3);
+    expect(r.banner).toBe(true);
+  });
+
   test('host state: 30 a second, whole-pixel positions, squads only when they change or every 2s', async ({ page }) => {
     await hostMatch(page);
     // Counted against the frames actually rendered: a slow headless page
