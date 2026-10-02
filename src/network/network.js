@@ -1,4 +1,8 @@
-import { joinRoom } from 'trystero/torrent';
+// selfId is a module export, not a property of the room joinRoom returns —
+// reading room.selfId gave undefined, and every host/guest comparison
+// against undefined is false both ways: first both players became the guest,
+// then (with the rule flipped) both became the host.
+import { joinRoom, selfId } from 'trystero/torrent';
 
 // APP_ID identifies this app inside Trystero's public signaling network.
 const APP_ID = 'inazuma-clone-proto-v1';
@@ -86,6 +90,18 @@ const TRACKER_URLS = [
   'wss://tracker.files.fm:7073/announce',
 ];
 
+/** Host rule: the lowest id among everyone in the room. Pure, so it can be
+ *  tested on its own; throws on a missing id instead of quietly answering
+ *  false for everyone (which is how two hosts happened). */
+export function isLowestId(myId, peerIds) {
+  if (typeof myId !== 'string' || !myId) throw new Error(`isLowestId: bad own id ${myId}`);
+  for (const id of peerIds) {
+    if (typeof id !== 'string' || !id) throw new Error(`isLowestId: bad peer id ${id}`);
+    if (id < myId) return false;
+  }
+  return true;
+}
+
 export function connectToRoom(roomCode) {
   const room = joinRoom({ appId: APP_ID, relayUrls: TRACKER_URLS, rtcConfig: { iceServers: ICE_SERVERS } }, roomCode);
 
@@ -93,7 +109,6 @@ export function connectToRoom(roomCode) {
   const [sendState, onState] = room.makeAction('state');
   const [sendSquad, onSquad] = room.makeAction('squad');
 
-  const selfId = room.selfId;
   // Everyone else in the room. Normally just the opponent — but an old tab
   // left open on the same code is a third peer, and tracking only one id
   // used to make two real players both decide they were the guest.
@@ -104,15 +119,14 @@ export function connectToRoom(roomCode) {
   // players it's the same rule as ever. Only "provisional" while nobody else
   // has joined yet — see onPeerConnect below.
   function isHost() {
-    for (const id of peers) if (id < selfId) return false;
-    return true; // alone in the room = provisional host
+    return isLowestId(selfId, peers); // alone in the room = provisional host
   }
 
   let externalJoinHandler = null;
   let externalLeaveHandler = null;
   room.onPeerJoin((id) => {
     peers.add(id);
-    console.log('[net] peer connected:', id, '— peers in room:', peers.size, '— am I host?', isHost());
+    console.log('[net] peer connected:', id, '— me:', selfId, '— peers in room:', peers.size, '— am I host?', isHost());
     // The WebRTC handshake takes real time, so isHost() called right at
     // page load (before either browser knows the other exists) always
     // sees "alone in the room" and both sides provisionally become host —

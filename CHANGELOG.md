@@ -4,6 +4,26 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Fix: both multiplayer players deciding they were the host (or both the guest)
+**The real cause of the two-device problems.**
+- `network.js` read its own id as `room.selfId`, but the room object
+  Trystero 0.20 returns has no `selfId`: it's a separate module export
+  (`import { selfId } from 'trystero/torrent'`, the same id Trystero
+  announces to the trackers). So our id was always `undefined`, and a
+  string compared with `undefined` is false both ways.
+- **Old rule** (`selfId < peerId`): both players became the guest. That
+  was the first test, stuck on "Waiting for match to start…" on both
+  screens.
+- **Rule flipped** ("host unless a peer's id is lower"): both became the
+  host, each simulating its own match. That was the second test, with
+  different positions, duels and shots.
+
+**Fix.**
+- Use Trystero's exported `selfId`.
+- The host rule lives in a pure `isLowestId(myId, peerIds)`, which throws
+  on a missing id instead of quietly answering false.
+- The `[net] peer connected` log shows both ids.
+
 ## Fix: multiplayer screens showing two different matches
 Every page joins the room in its URL as soon as it loads, whatever mode
 the player then picks. So someone on a shared link who started **Solo**

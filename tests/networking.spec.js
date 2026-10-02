@@ -307,3 +307,36 @@ test.describe('only Multiplayer plays over the network', () => {
   });
 });
 
+// The host is the lowest id in the room. Our own id must be Trystero's real
+// one: it used to be read from room.selfId, which doesn't exist, and every
+// comparison against that undefined made both players guests — then, once
+// the rule was flipped, both hosts.
+test.describe('host is the lowest id in the room', () => {
+  test('our own id is a real Trystero id, not undefined', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    const id = await page.evaluate(() => window.__scene.net.selfId);
+    expect(typeof id).toBe('string');
+    expect(id).toHaveLength(20);
+  });
+
+  test('of two players exactly one is host, seen from either side; of three, only the lowest', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    const r = await page.evaluate(async () => {
+      const { isLowestId } = await import('/src/network/network.js');
+      const a = 'AAAAbbbbccccddddeeee', b = 'ZZZZbbbbccccddddeeee', c = 'MMMMbbbbccccddddeeee';
+      let threw = false;
+      try { isLowestId(undefined, [a]); } catch { threw = true; }
+      return {
+        pair: [isLowestId(a, [b]), isLowestId(b, [a])],
+        trio: [isLowestId(a, [b, c]), isLowestId(b, [a, c]), isLowestId(c, [a, b])],
+        alone: isLowestId(b, []),
+        threw,
+      };
+    });
+    expect(r.pair).toEqual([true, false]);
+    expect(r.trio).toEqual([true, false, false]);
+    expect(r.alone).toBe(true);
+    expect(r.threw).toBe(true);
+  });
+});
+
