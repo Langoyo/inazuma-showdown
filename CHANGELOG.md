@@ -4,6 +4,29 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Fix: multiplayer screens showing two different matches
+Every page joins the room in its URL as soon as it loads, whatever mode
+the player then picks. So someone on a shared link who started **Solo**
+(or a tournament or a story) was still in the room, and their game
+leaked into it:
+- **Their squad went out on confirm.** A multiplayer host started a
+  match with it.
+- **Their solo match broadcast its state.** The other player drew it.
+- **Their own AI switched off** as soon as anyone else was in the room,
+  handing the rival team to "remote input" that never came.
+
+Now only Multiplayer plays over the network (`_online` / `_vsHuman`).
+Other modes don't send squads, state or inputs, ignore anything that
+arrives, always host their own match, and keep their AI opponent.
+
+**Two hosts.** If two hosts ever happen anyway, the host that receives
+the other's match state shows "⚠ Both players are hosting" instead of
+drawing a mix.
+
+**The mode badge now says which side you are** ("👥 Multiplayer ·
+host" / "· guest"), and the console logs who simulates the match when
+it starts.
+
 ## Multiplayer: a status line that says what's missing, squad receipts, extra-tab detection, live trackers only
 Testing peer-to-peer on the same Wi‑Fi, one screen sat on "Waiting for
 match to start…". The two browsers had connected (that text only shows

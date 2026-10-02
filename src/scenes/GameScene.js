@@ -646,7 +646,7 @@ export default class GameScene extends Phaser.Scene {
    *  without duplicating it. */
   _connectNet(code){
     this.net=connectToRoom(code);
-    this.role=this.net.isHost()?'A':'B';
+    this.role=this._roleNow();
     // isHost() at this exact instant is only a guess: the WebRTC handshake
     // hasn't happened yet, so both browsers loading the page at once see
     // "nobody else here" and both provisionally become 'A'. Once a peer
@@ -659,7 +659,7 @@ export default class GameScene extends Phaser.Scene {
       // ever retried it, leaving the other side waiting forever even though
       // both players had actually confirmed. Resending now that a peer
       // definitely exists costs nothing and fixes that silently-dropped case.
-      if(this.mySquadConfirmed) this.net.sendSquad(this.mySquadPayload);
+      if(this._online()&&this.mySquadConfirmed) this.net.sendSquad(this.mySquadPayload);
       this._renderNetStatus();
     });
     // Someone leaving before kick-off takes their squad (and any receipt of
@@ -682,6 +682,7 @@ export default class GameScene extends Phaser.Scene {
    *  opponent backing out of the squad editor after confirming (see
    *  _backToModeSelect), so a match can't start against someone who left. */
   _onRemoteSquad(d){
+    if(!this._online()) return; // not playing anyone (see _online)
     if(d?.ack){ this._squadAcked=true; this._renderNetStatus(); return; }
     if(d?.request){ if(this.mySquadConfirmed) this.net.sendSquad(this.mySquadPayload); return; }
     if(d?.retracted) this.remoteSquadPayload=null;
@@ -718,7 +719,7 @@ export default class GameScene extends Phaser.Scene {
     document.getElementById('landing-play-btn').addEventListener('click',()=>this._showModeSelect());
     document.getElementById('mode-solo-btn').addEventListener('click',()=>{
       this.uiMode='solo';
-      this._applyUiMode();
+      this._syncRoleFromNet();
       document.getElementById('mode-select-panel').style.display='none';
       document.getElementById('squad-editor-panel').style.display='flex';
     });
@@ -736,7 +737,7 @@ export default class GameScene extends Phaser.Scene {
       const code=document.getElementById('mode-join-input').value.trim().toUpperCase();
       if(code&&code!==this.roomCode) await this._switchRoom(code);
       this.uiMode='multiplayer';
-      this._applyUiMode();
+      this._syncRoleFromNet();
       document.getElementById('mode-select-panel').style.display='none';
       document.getElementById('squad-editor-panel').style.display='flex';
     });
@@ -919,10 +920,21 @@ export default class GameScene extends Phaser.Scene {
    *  peer actually connecting (or dropping) is never silent. */
   _updateModeBadge(){
     const badge=document.getElementById('mode-badge');
-    const multi=this.net.hasPeer();
-    badge.textContent=multi?'👥 Multiplayer':'🤖 Solo (vs AI)';
+    const multi=this._vsHuman();
+    const text=this._twoHosts?'⚠ Both players are hosting'
+      :multi?`👥 Multiplayer · ${this.role==='A'?'host':'guest'}`:'🤖 Solo (vs AI)';
+    if(badge.textContent!==text) badge.textContent=text;
     badge.classList.toggle('is-multi',multi);
   }
+  /** Network play only happens in Multiplayer mode. Every page joins the
+   *  room in its URL on load, so a player on a shared link who picks Solo,
+   *  a tournament or a story is still "in the room" — and used to send
+   *  their squad and match state into it, so the other player hosted or
+   *  watched someone else's match. Outside Multiplayer, none of that is
+   *  sent or listened to, and the local game is always its own host. */
+  _online(){ return this.uiMode==='multiplayer'; }
+  _vsHuman(){ return this._online()&&this.net.hasPeer(); }
+  _roleNow(){ return (!this._online()||this.net.isHost())?'A':'B'; }
 
   /** Re-derives which side we are from the network layer's now-current
    *  view of who's connected. Only matters before kickoff — role has to
@@ -930,7 +942,7 @@ export default class GameScene extends Phaser.Scene {
    *  always long since been detected if one exists. */
   _syncRoleFromNet(){
     if(this.matchStarted) return;
-    this.role=this.net.isHost()?'A':'B';
+    this.role=this._roleNow();
     this._applyUiMode();
     this._tryStartMultiplayerMatch();
   }
@@ -2245,9 +2257,9 @@ export default class GameScene extends Phaser.Scene {
     if(this.uiMode==='tournament'){ this._startTournamentWithSquad(payload); return; }
     if(this.uiMode==='story'){ this._startStoryWithSquad(payload); return; }
     this.mySquadPayload=payload; this.mySquadConfirmed=true; this._squadAcked=false;
-    this.net.sendSquad(payload);
     document.getElementById('confirm-squad-btn').disabled=true;
     if(this.uiMode==='solo'){ this._startMatch(payload,this._rivalSquadPayload()); return; }
+    this.net.sendSquad(payload);
     this._tryStartMultiplayerMatch();
     // Trystero's WebRTC data channel can drop a message sent right as it's
     // still finishing setup (see onPeerConnect's own resend-on-connect
@@ -2701,6 +2713,7 @@ export default class GameScene extends Phaser.Scene {
     this.activeIdA=this.teamA[0]?.id; this.activeIdB=this.teamB[0]?.id;
     this._setScoreboardNames(payloadA.name||'You',payloadB.name||(this.uiMode==='multiplayer'?'Opponent':'Rival'));
     this.matchStats=this._newMatchStats();
+    if(this._vsHuman()) console.log('[net] match started — I am the host (A), simulating for both players');
     // Kept for "Rematch" (see _rematch), which rebuilds this exact match
     // after the reload full time ends in.
     this._lastMatchPayloads={a:payloadA,b:payloadB};
@@ -2867,7 +2880,7 @@ export default class GameScene extends Phaser.Scene {
 
     // The AI rival's defence is tuned by difficulty; everyone else (your
     // teammates, either side in multiplayer) gets the defaults.
-    const lvl=(role==='B'&&!this.net.hasPeer())?this._aiParams():{};
+    const lvl=(role==='B'&&!this._vsHuman())?this._aiParams():{};
     const pressRange=lvl.press??PRESS_ENGAGE_RANGE, markRange=lvl.markRange??MARK_RANGE, markBlend=lvl.markBlend??MARK_BLEND;
     let presser=null, pressD=pressRange;
     for(const e of eligible){
@@ -3919,7 +3932,7 @@ export default class GameScene extends Phaser.Scene {
    *  and only while nobody is connected to play it), so switching level or
    *  having a real opponent join leaves the roster's numbers untouched. */
   _aiStatMul(role){
-    if(role!=='B'||this.net.hasPeer()) return 1;
+    if(role!=='B'||this._vsHuman()) return 1;
     return this._aiParams().statMul??1;
   }
   _aiSpeedMul(role){
@@ -4427,7 +4440,7 @@ export default class GameScene extends Phaser.Scene {
     const ot=(this.role==='A'?this.matchClock:this.remoteState?.clock)?.overtime?' in overtime':'';
     document.getElementById('fulltime-verdict').textContent=mine>theirs?`You win${ot}!`:mine<theirs?`You lose${ot}`:'Draw';
     this._renderMatchReport(report);
-    const multi=this.uiMode==='multiplayer'||this.net.hasPeer();
+    const multi=this._online();
     const rematch=document.getElementById('fulltime-rematch-btn');
     const cont=document.getElementById('fulltime-continue-btn');
     rematch.style.display=(!multi&&!inTournament&&!inStory&&this._lastMatchPayloads)?'':'none';
@@ -4487,9 +4500,9 @@ export default class GameScene extends Phaser.Scene {
     const targets=this.matchStarted?this._computeTargets():[];
     const myInput={targets,shootRequest:this.pendingShoot,shotAim:this.pendingShotAim,passTarget:this.pendingPass,confrontationChoice:this.pendingChoice,subRequest:this.pendingSub,repositionRequest:this.pendingReposition,formationChange:this.pendingFormChange,teamPanelRequest:this.pendingTeamPanelRequest};
     this.pendingShoot=false; this.pendingShotAim=null; this.pendingPass=null; this.pendingChoice=null; this.pendingSub=null; this.pendingReposition=null; this.pendingFormChange=null; this.pendingTeamPanelRequest=null;
-    this.net.sendInput(myInput);
+    if(this._online()) this.net.sendInput(myInput);
 
-    if(amHost){ if(this.matchStarted) this._hostUpdate(time,delta,myInput); else if(time-this.lastStateSent>1000/STATE_HZ){this.lastStateSent=time;this.net.sendState({matchStarted:false});} }
+    if(amHost){ if(this.matchStarted) this._hostUpdate(time,delta,myInput); else if(this._online()&&time-this.lastStateSent>1000/STATE_HZ){this.lastStateSent=time;this.net.sendState({matchStarted:false});} }
     else this._clientUpdate(time);
 
     if(this.matchStarted){ this._updateConfrontUI(this.confrontation,time); this._drawPaths(); this._subPanelTick(); }
@@ -4508,7 +4521,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _hostUpdate(now,delta,myInput){
-    const aiActive=!this.net.hasPeer();
+    const aiActive=!this._vsHuman();
     let inputB=this.remoteInput;
     if(aiActive){
       const eB=this._activeEntry('B');
@@ -4582,7 +4595,7 @@ export default class GameScene extends Phaser.Scene {
         a:this.teamA.filter(e=>this._isOut('A',e.id)).map(e=>e.id),
         b:this.teamB.filter(e=>this._isOut('B',e.id)).map(e=>e.id)
       };
-      this.net.sendState({matchStarted:true,ball:{x:this.ball.position.x,y:this.ball.position.y},ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>({x:e.body.position.x,y:e.body.position.y})),teamB:this.teamB.map(e=>({x:e.body.position.x,y:e.body.position.y})),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,attackerLocked:!!this.confrontation.attackerLocked,solo:!!this.confrontation.solo,keeperReach:this.confrontation.keeperReach??null,shotLine:this.confrontation.shotLine||null}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)},clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended,overtime:!!this.matchClock.overtime,otElapsed:this.matchClock.otElapsed||0},stuns:stunAry,teamPanelOpen:this.teamPanelOpen,report:this.matchClock.ended?this._matchReport():null});
+      if(this._online()) this.net.sendState({matchStarted:true,ball:{x:this.ball.position.x,y:this.ball.position.y},ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>({x:e.body.position.x,y:e.body.position.y})),teamB:this.teamB.map(e=>({x:e.body.position.x,y:e.body.position.y})),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,attackerLocked:!!this.confrontation.attackerLocked,solo:!!this.confrontation.solo,keeperReach:this.confrontation.keeperReach??null,shotLine:this.confrontation.shotLine||null}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)},clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended,overtime:!!this.matchClock.overtime,otElapsed:this.matchClock.otElapsed||0},stuns:stunAry,teamPanelOpen:this.teamPanelOpen,report:this.matchClock.ended?this._matchReport():null});
     }
   }
 
@@ -4667,9 +4680,20 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _incomingState(data){
+    if(!this._online()) return; // not playing anyone (see _online)
+    // Only the host sends match state, so a host receiving it means both
+    // sides started their own match: say so instead of drawing a mix.
+    if(this.role==='A'){
+      if(data.matchStarted&&this.matchStarted&&!this._twoHosts){
+        this._twoHosts=true;
+        console.error('[net] both players are hosting their own match — go back to the menu and reconnect');
+      }
+      return;
+    }
     this.remoteState=data;
     if(data.matchStarted&&!this.matchStarted){
       this.matchStarted=true;
+      console.log('[net] match started — I am the guest (B), drawing the host\'s match');
       document.getElementById('squad-editor-panel').style.display='none';
       if(this._squadRetryTimer){ clearInterval(this._squadRetryTimer); this._squadRetryTimer=null; }
     }

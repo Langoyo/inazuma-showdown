@@ -157,6 +157,8 @@ test.describe('role assignment vs. a late-connecting peer', () => {
       // Simulate what onPeerConnect fires after: a peer whose id sorts
       // after ours has now been detected, so the real comparison flips us
       // to 'B' — this is exactly what a stale, never-revisited role missed.
+      // Only in Multiplayer: any other mode is always its own host.
+      s.uiMode = 'multiplayer';
       const original = s.net.isHost;
       s.net.isHost = () => false;
       s._syncRoleFromNet();
@@ -247,6 +249,61 @@ test.describe('connection status line and squad receipts', () => {
     // On the guest, that squad arriving is all the client teams were waiting for.
     await page.evaluate(() => { const s = window.__scene; s._onRemoteSquad({ starterIds: s.squadSlots.filter(Boolean).slice().reverse(), benchIds: [], formation: s.chosenFormation }); s._buildClientTeams(); });
     expect(await page.evaluate(() => window.__scene.clientTeamsBuilt)).toBe(true);
+  });
+});
+
+// Every page joins the room in its URL on load, so someone on a shared link
+// who picks Solo (or a tournament or story) is "in the room" too. None of
+// their game may leak into it, or the other player hosts or draws someone
+// else's match.
+test.describe('only Multiplayer plays over the network', () => {
+  test('a Solo match with someone else in the room stays local: own host, AI opponent, nothing sent', async ({ page }) => {
+    await waitForRosterLoaded(page); // picks Solo
+    await page.evaluate(() => {
+      const s = window.__scene;
+      s.__sent = [];
+      for (const k of ['sendSquad', 'sendState', 'sendInput']) s.net[k] = (d) => { s.__sent.push(k); };
+      s.net.hasPeer = () => true; s.net.peerCount = () => 1;
+      s.net.isHost = () => false; // the other player's id sorts first
+      s._syncRoleFromNet();
+    });
+    await page.click('#pitch-randomize-btn');
+    await page.click('#confirm-squad-btn');
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
+    await page.waitForTimeout(400);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      // A multiplayer opponent's squad and state reaching us are ignored too.
+      s._onRemoteSquad({ starterIds: ['x'] });
+      s._incomingState({ matchStarted: true });
+      return { role: s.role, sent: s.__sent, aiStatMul: s._aiStatMul('B'), remote: s.remoteSquadPayload, badge: document.getElementById('mode-badge').textContent };
+    });
+    expect(r.role).toBe('A');
+    expect(r.sent).toEqual([]);
+    expect(r.aiStatMul).toBe(1.04); // Normal's AI is playing side B, not a remote player
+    expect(r.remote ?? null).toBeNull();
+    expect(r.badge).toContain('Solo');
+  });
+
+  test('two hosts are detected and flagged instead of drawing a mix of both matches', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => document.querySelectorAll('#squad-pick-list .pick-card').length > 0, { timeout: 15000 });
+    await page.click('#landing-play-btn');
+    await page.click('#mode-multi-btn');
+    await page.click('#mode-multi-start-btn');
+    await page.evaluate(() => {
+      const s = window.__scene;
+      s.net.sendSquad = () => {}; s.net.hasPeer = () => true; s.net.peerCount = () => 1;
+    });
+    await page.click('#pitch-randomize-btn');
+    await page.click('#confirm-squad-btn');
+    await page.evaluate(() => { const s = window.__scene; s._onRemoteSquad({ starterIds: s.squadSlots.filter(Boolean).slice().reverse(), benchIds: [], formation: s.chosenFormation }); });
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 5000 });
+    await expect(page.locator('#mode-badge')).toHaveText('👥 Multiplayer · host');
+    // State from the other side means it is hosting its own match as well.
+    await page.evaluate(() => window.__scene._incomingState({ matchStarted: true, ball: { x: 0, y: 0 } }));
+    await expect(page.locator('#mode-badge')).toHaveText('⚠ Both players are hosting');
+    expect(await page.evaluate(() => window.__scene.remoteState)).toBeNull();
   });
 });
 
