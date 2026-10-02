@@ -4980,23 +4980,16 @@ export default class GameScene extends Phaser.Scene {
     const myChoice=amA?confrontation.attackerChoice:confrontation.defenderChoice;
     const myChoiceIsTech=myChoice&&typeof myChoice==='object'&&typeof myChoice.tech==='number';
     normalBtn.classList.toggle('is-primary',myChoice==='normal');
-    // Show the elemental matchup before the choice, not just in the reveal —
-    // it's the one thing you can actually plan around. Each move brings its
-    // own element (see _moveElement), so this lists what the rival could
-    // answer with: their own element for a normal action plus each of their
-    // techniques'. Facing a shot there's nothing to list — its technique
-    // stays hidden until the VS card.
-    const solo=!!confrontation.solo;
+    // Both players' elements, side by side, before the choice — what a
+    // normal action plays with on each side (a technique brings its own,
+    // shown on its button). Facing a shot, or lining one up, the rival is
+    // the shooter / the keeper.
     const oppRole=amA?confrontation.defenderRole:confrontation.attackerRole;
-    const oppId=solo?(oppRole==='A'?this.gkIdA:this.gkIdB):(amA?confrontation.defenderId:confrontation.attackerId);
+    const oppId=confrontation.solo?(oppRole==='A'?this.gkIdA:this.gkIdB):(amA?confrontation.defenderId:confrontation.attackerId);
     const oppStats=this._statsFor(oppRole,oppId);
-    const oppCat=isDuel?(amA?'defense':'dribble'):amA?(isBlock?'defense':'keeper'):null;
-    const oppEls=oppCat&&oppStats
-      ? [...new Set([oppStats.element,...techniquesFor(oppStats,oppCat).map(t=>t.element)].filter(Boolean))]
-      : [];
-    const myEl=stats?.element?` · normal ${this._elBadge(stats.element)}`:'';
-    const elLine=myEl+(oppEls.length?` · rival: ${oppEls.map(el=>this._elBadge(el,false)).join(' ')}`:'');
-    document.getElementById('confrontation-player-info').innerHTML=stats?`<b>${rp?.name||stats.name}</b> — PT ${Math.round(stats.sp)}/${Math.round(stats.maxSP)}${elLine}`:'';
+    const side=(label,st)=>`<span class="conf-side"><span class="conf-who">${label}</span>${st?.element?this._elBadge(st.element):'<span class="el-badge">—</span>'}</span>`;
+    const matchup=`<div class="conf-matchup">${side('You',stats)}<span class="conf-vs">VS</span>${side(oppStats?.nickname||oppStats?.name||'Rival',oppStats)}</div>`;
+    document.getElementById('confrontation-player-info').innerHTML=stats?`<b>${rp?.name||stats.name}</b> — PT ${Math.round(stats.sp)}/${Math.round(stats.maxSP)}${matchup}`:'';
     // One button per technique this player has in the category — a player
     // with more than one of the same kind (see techniquesFor) can pick
     // whichever they want, not just whichever happens to be "the" one.
@@ -5005,10 +4998,8 @@ export default class GameScene extends Phaser.Scene {
     techs.forEach((tech,idx)=>{
       const btn=document.createElement('button');
       btn.className='conf-btn nes-btn'; btn.dataset.idx=idx;
-      // The technique's own element (its type), which needn't be the
-      // player's — and what it beats, so the matchup reads at a glance.
-      const beats=tech.element&&ELEMENT_BEATS[tech.element];
-      const elBadge=tech.element?`${this._elBadge(tech.element)}${beats?`<span class="el-beats">beats ${ELEMENT_ICON[beats]}</span>`:''} · `:'';
+      // The technique's own element (its type), which needn't be the player's.
+      const elBadge=tech.element?`${this._elBadge(tech.element)} · `:'';
       btn.innerHTML=`${tech.name}<span class="cost">${elBadge}${tech.cost} PT</span>`;
       btn.dataset.element=tech.element||'';
       btn.disabled=!stats||stats.sp<tech.cost;

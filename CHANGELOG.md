@@ -18,11 +18,10 @@ and how to run it, see [`README.md`](./README.md).
     to the block and the keeper (`_moveElement`, `shotSeq.el`).
   - The VS cards, the burst effects and the edge all use it.
 - **Shown on the cards:**
-  - Each technique button shows its element and what it beats
-    ("🔥 Fire beats 🌿 · 21 PT").
-  - The panel's info line lists your normal action's element and every
-    element the rival could answer with. Facing a shot it lists nothing,
-    since the shot's technique stays hidden until the VS card.
+  - Each technique button shows its element ("🔥 Fire · 21 PT").
+  - The duel panel shows both players' own elements side by side:
+    "You 💨 Air VS ⛰️ Earth <rival>". Facing a shot, the rival is the
+    shooter; lining one up, the keeper.
   - The player stat sheet tags each technique with its element.
 - **Stamina is proportional to the match length.**
   - The running drain and the duel costs were tuned for 3-minute halves.

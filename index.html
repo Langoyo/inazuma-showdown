@@ -517,7 +517,12 @@
     .el-Air   { color: #8fd6ff; }
     .el-Earth { color: var(--gold); }
     .el-Void  { color: #c9c9d6; }
-    .el-beats { margin-left: 3px; font-size: 0.85em; opacity: 0.75; }
+    /* on the white technique buttons the pale element colours wash out */
+    .conf-btn .el-badge { color: #000; }
+    .conf-matchup { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 4px; font-size: 15px; }
+    .conf-side { display: inline-flex; align-items: center; gap: 6px; }
+    .conf-who { opacity: 0.75; font-size: 12px; }
+    .conf-vs { color: var(--gold); font-weight: bold; font-size: 12px; }
     .duel-el {
       display: inline-block; margin-left: 6px; font-size: 12px; font-weight: normal;
       opacity: 0.85; vertical-align: middle;

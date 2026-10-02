@@ -98,10 +98,10 @@ test.describe('technique elements', () => {
     });
     expect(r.btns[0].el).toBe('Air');
     expect(r.btns[0].text).toContain('Air');
-    expect(r.btns[0].text).toContain('beats ⛰️'); // Air beats Earth
+    expect(r.btns[0].text).not.toContain('beats');
     expect(r.btns[1].el).toBe('Void');
-    expect(r.info).toContain('el-Fire');       // my normal action
-    expect(r.info).toMatch(/rival:.*el-Earth.*el-Wood/); // their normal + their technique
+    // Both players' own elements, mine first.
+    expect(r.info).toMatch(/conf-matchup.*You.*el-Fire.*VS.*el-Earth/);
 
     const p = await page.evaluate(() => window.__scene.rosterAll.find((pl) => Object.values(pl.techniques || {}).some((t) => t?.element && t.element !== pl.element)));
     await page.evaluate((pl) => window.__scene._showPlayerStats(pl), p);
