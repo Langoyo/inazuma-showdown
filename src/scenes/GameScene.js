@@ -116,7 +116,21 @@ const GOAL_PAUSE_MS     = 2500; // how long play freezes to show the goal banner
 const AI_SUB_CHECK_MS   = 8000; // how often the AI reconsiders its own lineup
 const AI_SUB_STAMINA    = 0.35; // fraction of maxStamina below which a player becomes a sub candidate
 const AI_MAX_SUBS       = 3;    // matches the real substitution limit
-const STATE_HZ          = 20;
+const STATE_HZ          = 30;
+// Guest → host input: at most this often while only its runs change, at
+// once for a tap, and a heartbeat otherwise (see _sendInputMaybe).
+const INPUT_HZ          = 30;
+const INPUT_HEARTBEAT_MS= 250;
+// State parts that never change mid-play ride along only when they change,
+// plus a keyframe this often (see _hostUpdate's send).
+const STATE_KEYFRAME_MS = 2000;
+// One-shot input fields: a tap, delivered to the host exactly once.
+const ONE_SHOT_INPUTS   = ['shootRequest','shotAim','passTarget','confrontationChoice','subRequest','repositionRequest','formationChange','teamPanelRequest'];
+// Guest-side prediction of its own drawn runs (see _clientUpdate).
+const PREDICT_BLEND     = 0.15; // pull toward the host's position each frame
+const PREDICT_SNAP_DIST = 60;   // further off than this, pull harder:
+const PREDICT_SNAP_BLEND= 0.5;
+const CLIENT_BLEND      = 0.4;  // everything else follows the host's states
 const SCROLL_SPEED      = 340;   // px/s when a scroll button is held (was 220 — asked for faster)
 
 // Physics forces — the ball carrier is only slightly sharper than everyone
@@ -672,7 +686,7 @@ export default class GameScene extends Phaser.Scene {
     });
     this.remoteState=null;
     this.remoteInput={targets:[],shootRequest:false,passTarget:null,confrontationChoice:null,subRequest:null,repositionRequest:null,formationChange:null,teamPanelRequest:null};
-    this.net.onInput(d=>{ this.remoteInput=d; });
+    this.net.onInput(d=>this._latchInput(d));
     this.net.onState(d=>this._incomingState(d));
     this.net.onSquad(d=>this._onRemoteSquad(d));
   }
@@ -922,7 +936,7 @@ export default class GameScene extends Phaser.Scene {
     const badge=document.getElementById('mode-badge');
     const multi=this._vsHuman();
     const text=this._twoHosts?'⚠ Both players are hosting'
-      :multi?`👥 Multiplayer · ${this.role==='A'?'host':'guest'}`:'🤖 Solo (vs AI)';
+      :multi?`👥 Multiplayer · ${this.role==='A'?'host':'guest'}${this._pingMs!=null?` · ${Math.round(this._pingMs)} ms`:''}`:'🤖 Solo (vs AI)';
     if(badge.textContent!==text) badge.textContent=text;
     badge.classList.toggle('is-multi',multi);
   }
@@ -4500,10 +4514,17 @@ export default class GameScene extends Phaser.Scene {
     const targets=this.matchStarted?this._computeTargets():[];
     const myInput={targets,shootRequest:this.pendingShoot,shotAim:this.pendingShotAim,passTarget:this.pendingPass,confrontationChoice:this.pendingChoice,subRequest:this.pendingSub,repositionRequest:this.pendingReposition,formationChange:this.pendingFormChange,teamPanelRequest:this.pendingTeamPanelRequest};
     this.pendingShoot=false; this.pendingShotAim=null; this.pendingPass=null; this.pendingChoice=null; this.pendingSub=null; this.pendingReposition=null; this.pendingFormChange=null; this.pendingTeamPanelRequest=null;
-    if(this._online()) this.net.sendInput(myInput);
+    if(this._online()&&!amHost) this._sendInputMaybe(myInput,time);
+    if(this._vsHuman()&&time-(this._lastPingAt??-1e9)>2000){
+      this._lastPingAt=time;
+      this.net.ping?.().then(ms=>{ this._pingMs=ms; });
+    }
 
-    if(amHost){ if(this.matchStarted) this._hostUpdate(time,delta,myInput); else if(this._online()&&time-this.lastStateSent>1000/STATE_HZ){this.lastStateSent=time;this.net.sendState({matchStarted:false});} }
-    else this._clientUpdate(time);
+    if(amHost){
+      if(this.matchStarted){ this._hostUpdate(time,delta,myInput); this._clearRemoteOneShots(); }
+      else if(this._online()&&time-this.lastStateSent>1000/STATE_HZ){this.lastStateSent=time;this.net.sendState({matchStarted:false});}
+    }
+    else this._clientUpdate(time,delta);
 
     if(this.matchStarted){ this._updateConfrontUI(this.confrontation,time); this._drawPaths(); this._subPanelTick(); }
   }
@@ -4519,6 +4540,30 @@ export default class GameScene extends Phaser.Scene {
     const sig=`${team.map(e=>e.id).join(',')}|${[...bench].join(',')}|${this.formation[this.role]}`;
     if(sig!==this._subPanelSig){ this._subPanelSig=sig; this._renderSubPanel(); }
   }
+
+  /** Guest only (the host's input is never used): sends at most INPUT_HZ
+   *  times a second while just its runs change, at once when there's a
+   *  tap, and a heartbeat otherwise. Taps made between sends are kept
+   *  for the next one rather than dropped. */
+  _sendInputMaybe(inp,time){
+    const acc=(this._outInput??={});
+    for(const k of ONE_SHOT_INPUTS) if(inp[k]) acc[k]=inp[k];
+    const key=JSON.stringify(inp.targets);
+    const since=time-(this._lastInputSent??-1e9);
+    if(ONE_SHOT_INPUTS.some(k=>acc[k])||(key!==this._lastTargetsKey&&since>=1000/INPUT_HZ)||since>=INPUT_HEARTBEAT_MS){
+      this.net.sendInput({targets:inp.targets,...acc});
+      this._outInput={}; this._lastTargetsKey=key; this._lastInputSent=time;
+    }
+  }
+  /** Host: keep the guest's newest runs, and hold each tap until a frame
+   *  has used it — two messages arriving between frames used to lose the
+   *  first one's tap, and a late one repeated it. */
+  _latchInput(d){
+    const r=this.remoteInput;
+    r.targets=d?.targets||[];
+    for(const k of ONE_SHOT_INPUTS) if(d?.[k]) r[k]=d[k];
+  }
+  _clearRemoteOneShots(){ for(const k of ONE_SHOT_INPUTS) this.remoteInput[k]=null; }
 
   _hostUpdate(now,delta,myInput){
     const aiActive=!this._vsHuman();
@@ -4583,7 +4628,15 @@ export default class GameScene extends Phaser.Scene {
     this._renderResultBanner(this.confrontResult,now);
     const as=this._statsFor('A',this.activeIdA); if(as) this._paintHUD(as.sp,as.maxSP,as.stamina,as.maxStamina);
 
-    if(now-this.lastStateSent>1000/STATE_HZ){
+    // An accumulator, not "time since the last send": with frames of ~29ms
+    // (a slower device), the old check only passed every second frame and
+    // halved the rate. This averages STATE_HZ at any frame rate.
+    // Real elapsed time, not Phaser's delta, which is smoothed and capped
+    // and so under-counts exactly the slow frames this is about.
+    this._stateAcc=(this._stateAcc||0)+(now-(this._lastHostFrameAt??now));
+    this._lastHostFrameAt=now;
+    if(this._stateAcc>=1000/STATE_HZ){
+      this._stateAcc=Math.min(this._stateAcc-1000/STATE_HZ,1000/STATE_HZ);
       this.lastStateSent=now;
       const as2=this._statsFor('A',this.activeIdA), bs=this._statsFor('B',this.activeIdB);
       const stunAry=[...this.stunMap.entries()].map(([k,v])=>({id:k,until:v}));
@@ -4595,7 +4648,14 @@ export default class GameScene extends Phaser.Scene {
         a:this.teamA.filter(e=>this._isOut('A',e.id)).map(e=>e.id),
         b:this.teamB.filter(e=>this._isOut('B',e.id)).map(e=>e.id)
       };
-      if(this._online()) this.net.sendState({matchStarted:true,ball:{x:this.ball.position.x,y:this.ball.position.y},ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>({x:e.body.position.x,y:e.body.position.y})),teamB:this.teamB.map(e=>({x:e.body.position.x,y:e.body.position.y})),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,attackerLocked:!!this.confrontation.attackerLocked,solo:!!this.confrontation.solo,keeperReach:this.confrontation.keeperReach??null,shotLine:this.confrontation.shotLine||null}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)},clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended,overtime:!!this.matchClock.overtime,otElapsed:this.matchClock.otElapsed||0},stuns:stunAry,teamPanelOpen:this.teamPanelOpen,report:this.matchClock.ended?this._matchReport():null});
+      // Parts that rarely change only go out when they do (or on a
+      // keyframe); the guest merges each state into the last one.
+      const statics={maxSp:{a:as2?as2.maxSP:100,b:bs?bs.maxSP:100},maxStamina:{a:as2?as2.maxStamina:150,b:bs?bs.maxStamina:150},benchIds:{a:this.benchA,b:this.benchB},starterIds:{a:this.teamA.map(e=>e.id),b:this.teamB.map(e=>e.id)}};
+      const staticKey=JSON.stringify(statics);
+      const sendStatics=staticKey!==this._lastStaticKey||now-(this._lastKeyframeAt??-1e9)>STATE_KEYFRAME_MS;
+      if(sendStatics){ this._lastStaticKey=staticKey; this._lastKeyframeAt=now; }
+      const rp=b=>({x:Math.round(b.position.x),y:Math.round(b.position.y)});
+      if(this._online()) this.net.sendState({...(sendStatics?statics:{}),matchStarted:true,ball:rp(this.ball),ballH:this.ballFlight?Math.round(this.ballFlight.h):0,teamA:this.teamA.map(e=>rp(e.body)),teamB:this.teamB.map(e=>rp(e.body)),activeIdA:this.activeIdA,activeIdB:this.activeIdB,score:this.score,sp:{a:as2?as2.sp:0,b:bs?bs.sp:0},stamina:{a:as2?as2.stamina:0,b:bs?bs.stamina:0},statsAll,sentOff,possession:this.possRole,confrontation:this.confrontation?{type:this.confrontation.type,attackerRole:this.confrontation.attackerRole,defenderRole:this.confrontation.defenderRole,attackerId:this.confrontation.attackerId,defenderId:this.confrontation.defenderId,deadline:this.confrontation.deadline,reveal:this.confrontation.reveal||null,attackerLocked:!!this.confrontation.attackerLocked,solo:!!this.confrontation.solo,keeperReach:this.confrontation.keeperReach??null,shotLine:this.confrontation.shotLine||null}:null,confrontResult:(this.confrontResult&&now<this.confrontResult.until)?this.confrontResult:null,clock:{half:this.matchClock.half,secondsRemaining:this.matchClock.secondsRemaining,ended:this.matchClock.ended,overtime:!!this.matchClock.overtime,otElapsed:this.matchClock.otElapsed||0},stuns:stunAry,teamPanelOpen:this.teamPanelOpen,report:this.matchClock.ended?this._matchReport():null});
     }
   }
 
@@ -4690,7 +4750,8 @@ export default class GameScene extends Phaser.Scene {
       }
       return;
     }
-    this.remoteState=data;
+    // Merged, not replaced: the host leaves out parts that haven't changed.
+    this.remoteState={...(this.remoteState||{}),...data};
     if(data.matchStarted&&!this.matchStarted){
       this.matchStarted=true;
       console.log('[net] match started — I am the guest (B), drawing the host\'s match');
@@ -4714,9 +4775,9 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  _clientUpdate(time){
+  _clientUpdate(time,delta=16.67){
     if(!this.remoteState?.matchStarted||!this.clientTeamsBuilt) return;
-    const lerp=0.3;
+    const lerp=CLIENT_BLEND;
     this._syncClientIds(this.remoteState);
     if(this.remoteState.stuns) this.remoteState.stuns.forEach(({id,until})=>this.stunMap.set(id,until));
     // Track the ball's position on the ground and add the synced height on
@@ -4726,7 +4787,25 @@ export default class GameScene extends Phaser.Scene {
     this._clientBall.y=Phaser.Math.Linear(this._clientBall.y,this.remoteState.ball.y,lerp);
     this._drawBall(this._clientBall.x,this._clientBall.y,this.remoteState.ballH||0);
     this.teamA.forEach((e,i)=>{ const p=this.remoteState.teamA[i]; if(!p)return; e.gfx.x=Phaser.Math.Linear(e.gfx.x,p.x,lerp); e.gfx.y=Phaser.Math.Linear(e.gfx.y,p.y,lerp); e.label.setPosition(e.gfx.x,e.gfx.y+15); });
-    this.teamB.forEach((e,i)=>{ const p=this.remoteState.teamB[i]; if(!p)return; e.gfx.x=Phaser.Math.Linear(e.gfx.x,p.x,lerp); e.gfx.y=Phaser.Math.Linear(e.gfx.y,p.y,lerp); e.label.setPosition(e.gfx.x,e.gfx.y+15); });
+    // Our own team: a player on a drawn run moves toward its next waypoint
+    // right away, at its own pace, instead of waiting for the round trip
+    // to the host — then gets pulled toward where the host has it, harder
+    // if they've drifted apart (a stun, a tackle), so it never disagrees
+    // for long. Everyone else simply follows the host's states.
+    this.teamB.forEach((e,i)=>{
+      const p=this.remoteState.teamB[i]; if(!p) return;
+      const wp=this.myPaths.get(e.id)?.[0];
+      if(wp){
+        const st=this._statsFor('B',e.id);
+        const step=BASE_MAX_SPEED*(st?statMul(st.agility):1)*(1+SPRINT_MAX_SPEED_BONUS)*(delta/16.67);
+        const dx=wp.x-e.gfx.x, dy=wp.y-e.gfx.y, d=Math.hypot(dx,dy);
+        if(d>0.5){ const k=Math.min(1,step/d); e.gfx.x+=dx*k; e.gfx.y+=dy*k; }
+        const off=Math.hypot(p.x-e.gfx.x,p.y-e.gfx.y);
+        const b=off>PREDICT_SNAP_DIST?PREDICT_SNAP_BLEND:PREDICT_BLEND;
+        e.gfx.x=Phaser.Math.Linear(e.gfx.x,p.x,b); e.gfx.y=Phaser.Math.Linear(e.gfx.y,p.y,b);
+      } else { e.gfx.x=Phaser.Math.Linear(e.gfx.x,p.x,lerp); e.gfx.y=Phaser.Math.Linear(e.gfx.y,p.y,lerp); }
+      e.label.setPosition(e.gfx.x,e.gfx.y+15);
+    });
     if(this.remoteState.sentOff){
       const outA=new Set(this.remoteState.sentOff.a||[]), outB=new Set(this.remoteState.sentOff.b||[]);
       this.teamA.forEach(e=>{ const out=outA.has(e.id); e.gfx.setVisible(!out); e.label.setVisible(!out); if(out) this.cards.set(this._cardKey('A',e.id),{yellow:2,red:true}); });

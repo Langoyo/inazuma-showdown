@@ -159,7 +159,14 @@ export function connectToRoom(roomCode) {
     externalLeaveHandler = fn;
   }
 
-  return { room, selfId, isHost, hasPeer, peerCount, onPeerConnect, onPeerDisconnect, sendInput, onInput, sendState, onState, sendSquad, onSquad };
+  /** Round trip to the opponent in ms (Trystero's own ping), or null alone. */
+  async function ping() {
+    const [id] = peers;
+    if (!id) return null;
+    try { return await room.ping(id); } catch { return null; }
+  }
+
+  return { room, selfId, isHost, hasPeer, peerCount, ping, onPeerConnect, onPeerDisconnect, sendInput, onInput, sendState, onState, sendSquad, onSquad };
 }
 
 /** Generates or reads a short room code from the URL (?room=XXXX). */

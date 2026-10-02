@@ -340,3 +340,142 @@ test.describe('host is the lowest id in the room', () => {
   });
 });
 
+
+// Guest responsiveness: less traffic on the reliable channel, taps delivered
+// exactly once, rarely-changing state sent only when it changes, and the
+// guest's own drawn runs moving at once instead of after the round trip.
+test.describe('guest responsiveness', () => {
+  async function multiplayer(page, { host }) {
+    await page.goto('/');
+    await page.waitForFunction(() => document.querySelectorAll('#squad-pick-list .pick-card').length > 0, { timeout: 15000 });
+    await page.click('#landing-play-btn');
+    await page.click('#mode-multi-btn');
+    await page.click('#mode-multi-start-btn');
+    await page.evaluate((host) => {
+      const s = window.__scene;
+      s.__inputs = []; s.__states = [];
+      s.net.sendInput = (d) => s.__inputs.push({ t: performance.now(), d });
+      s.net.sendState = (d) => s.__states.push(d);
+      s.net.sendSquad = () => {};
+      s.net.ping = async () => 42;
+      s.net.isHost = () => host; s.net.hasPeer = () => true; s.net.peerCount = () => 1;
+      s._syncRoleFromNet();
+    }, host);
+  }
+  // A host match against a stubbed peer, so its outgoing states can be read.
+  async function hostMatch(page) {
+    await multiplayer(page, { host: true });
+    await page.click('#pitch-randomize-btn');
+    await page.click('#confirm-squad-btn');
+    await page.evaluate(() => { const s = window.__scene; s._onRemoteSquad({ starterIds: s.squadSlots.filter(Boolean).slice().reverse(), benchIds: [], formation: s.chosenFormation }); });
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 5000 });
+  }
+
+  test('the guest sends input a few times a second when idle, and a tap at once; the host sends none', async ({ page }) => {
+    await multiplayer(page, { host: false });
+    await page.evaluate(() => { window.__scene.__inputs = []; });
+    await page.waitForTimeout(1000);
+    const idle = await page.evaluate(() => window.__scene.__inputs.length);
+    expect(idle).toBeGreaterThanOrEqual(3);
+    expect(idle).toBeLessThanOrEqual(6); // a heartbeat every 250ms, not ~60 a second
+    const tap = await page.evaluate(async () => {
+      const s = window.__scene; s.__inputs = [];
+      s.pendingPass = { x: 300, y: 400 };
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return s.__inputs.map((i) => i.d.passTarget).filter(Boolean);
+    });
+    expect(tap).toEqual([{ x: 300, y: 400 }]);
+
+    const host = await page.evaluate(async () => {
+      const s = window.__scene;
+      s.net.isHost = () => true; s._syncRoleFromNet(); s.__inputs = [];
+      await new Promise((r) => setTimeout(r, 500));
+      return s.__inputs.length;
+    });
+    expect(host).toBe(0);
+  });
+
+  test('host: a tap followed by another message before the next frame is still used, once', async ({ page }) => {
+    await multiplayer(page, { host: true });
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      s._latchInput({ targets: [], passTarget: { x: 1, y: 2 } });
+      s._latchInput({ targets: [{ id: 'x', x: 5, y: 5 }] }); // arrives before the host's frame
+      const held = s.remoteInput.passTarget;
+      const targets = s.remoteInput.targets.length;
+      s._clearRemoteOneShots(); // what the host does after its frame
+      return { held, targets, after: s.remoteInput.passTarget };
+    });
+    expect(r.held).toEqual({ x: 1, y: 2 });
+    expect(r.targets).toBe(1);
+    expect(r.after).toBeNull();
+  });
+
+  test('host state: 30 a second, whole-pixel positions, squads only when they change or every 2s', async ({ page }) => {
+    await hostMatch(page);
+    // Counted against the frames actually rendered: a slow headless page
+    // runs ~25 fps here, and states can only go out on frames.
+    const r = await page.evaluate(async () => {
+      const s = window.__scene; s.__states = [];
+      let frames = 0; const t0 = performance.now();
+      await new Promise((res) => { const f = () => { frames++; if (performance.now() - t0 < 2600) requestAnimationFrame(f); else res(); }; requestAnimationFrame(f); });
+      const st = s.__states.filter((d) => d.matchStarted);
+      return {
+        count: st.length, expected: Math.min(frames, 30 * 2.6),
+        withIds: st.filter((d) => d.starterIds).length,
+        intPositions: st.every((d) => Number.isInteger(d.ball.x) && d.teamA.every((p) => Number.isInteger(p.x) && Number.isInteger(p.y))),
+      };
+    });
+    expect(r.count).toBeGreaterThan(r.expected * 0.6); // ~30/s, or every frame on a slower page (was 20/s)
+    expect(r.withIds).toBeGreaterThanOrEqual(1); // the 2s keyframe
+    expect(r.withIds).toBeLessThanOrEqual(3);
+    expect(r.intPositions).toBe(true);
+  });
+
+  test('guest: states merge, and its own drawn run moves at once, pulled back when the host disagrees', async ({ browser }) => {
+    // A real host state, captured from a host page…
+    const hostPage = await browser.newPage();
+    await hostMatch(hostPage);
+    await hostPage.waitForTimeout(400);
+    const { state, hostSquad } = await hostPage.evaluate(() => {
+      const s = window.__scene;
+      const st = s.__states.filter((d) => d.matchStarted);
+      const full = st.reduce((acc, d) => ({ ...acc, ...d }), {});
+      return { state: full, hostSquad: s.mySquadPayload };
+    });
+    await hostPage.close();
+
+    // …fed to a guest whose squad is the host's side B.
+    const page = await browser.newPage();
+    await multiplayer(page, { host: false });
+    const r = await page.evaluate(({ state, hostSquad }) => {
+      const s = window.__scene;
+      s.mySquadPayload = { starterIds: state.starterIds.b, benchIds: [], formation: '4-4-2' };
+      s.mySquadConfirmed = true;
+      s.remoteSquadPayload = hostSquad;
+      s._incomingState(state);
+      s._buildClientTeams();
+      // A later state without the squads keeps them.
+      const { starterIds, benchIds, maxSp, maxStamina, ...slim } = state;
+      s._incomingState(slim);
+      const kept = !!s.remoteState.starterIds;
+      // Our player 5 draws a run 200px to the right; the host hasn't moved it yet.
+      const e = s.teamB[5], p = state.teamB[5];
+      e.gfx.x = p.x; e.gfx.y = p.y;
+      s.myPaths.set(e.id, [{ x: p.x + 200, y: p.y }]);
+      for (let i = 0; i < 10; i++) s._clientUpdate(performance.now(), 16.67);
+      const lead = e.gfx.x - p.x;
+      // The host has it 100px the other way (say it was knocked back).
+      s.myPaths.delete(e.id);
+      const far = { ...state, teamB: state.teamB.map((q, i) => (i === 5 ? { x: p.x - 100, y: p.y } : q)) };
+      s._incomingState(far);
+      const before = Math.abs(e.gfx.x - (p.x - 100));
+      s._clientUpdate(performance.now(), 16.67);
+      const after = Math.abs(e.gfx.x - (p.x - 100));
+      return { kept, lead, before, after };
+    }, { state, hostSquad });
+    expect(r.kept).toBe(true);
+    expect(r.lead).toBeGreaterThan(2); // ahead of the host's (stale) position, toward the waypoint
+    expect(r.after).toBeLessThan(r.before * 0.7);
+  });
+});

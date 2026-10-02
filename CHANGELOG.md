@@ -4,6 +4,40 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Multiplayer: a more responsive guest
+Two-device play worked, but the guest felt laggy. Everything goes through
+Trystero's reliable, ordered data channel, which holds new messages back
+while its buffer is full, so every extra message waited in line ahead of
+the next state.
+
+- **Less traffic.**
+  - The host no longer sends its input (the guest never used it).
+  - The guest sends input at most 30 times a second while its runs
+    change, at once for a tap, and otherwise a heartbeat every 250ms.
+    It used to send every frame, about 60 a second.
+  - The host's state goes out 30 times a second instead of 20, with
+    whole-pixel positions.
+  - Squads, benches and max PT/stamina are only included when they
+    change, plus a keyframe every 2s. The guest merges each state into
+    the last one.
+- **Taps arrive exactly once.** The host used to replace the guest's
+  input wholesale, so two messages between frames lost the first one's
+  shot, pass or choice, and a late one repeated it. Taps are now held
+  until a host frame uses them, then cleared (`_latchInput`,
+  `_clearRemoteOneShots`).
+- **State rate on slow frames.** Sending used real elapsed time with an
+  accumulator. The old "time since the last send" check halved the rate
+  on a host running below 60 fps.
+- **Your own runs move at once.**
+  - On the guest, a player following a drawn line moves toward its next
+    waypoint locally at its own pace, instead of after the round trip.
+    It's then pulled toward the host's position (a gentle 0.15 blend, or
+    0.5 when more than 60px apart), so a disagreement never lasts.
+  - Everything else follows the host's states a little more tightly
+    (0.4 instead of 0.3).
+- **Ping on the badge.** It now shows the round trip ("👥 Multiplayer ·
+  guest · 38 ms"), which tells a slow connection apart from a slow game.
+
 ## Fix: both multiplayer players deciding they were the host (or both the guest)
 **The real cause of the two-device problems.**
 - `network.js` read its own id as `room.selfId`, but the room object
