@@ -4,6 +4,442 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Level-99 stats
+Stats now show each character at **level 99** (the database's
+`baseStats99`) instead of level 50. Axel Blaze's Kick, for example, reads
+194 rather than 121.
+
+Level 99 is 1.6× level 50 for every stat (1.58–1.64 after the
+database's rounding). Cards kept from the previous roster only had level
+50, so they're scaled by the same 1.6.
+
+Because the rise is the same for everyone, the game plays exactly as
+before:
+- **Confrontations** compare one side's stats against the other's, which
+  is a ratio and doesn't care about units.
+- **Pace and fouls** are the only places that use a stat's absolute size,
+  through `STAT_UNIT`. It's divided by 1.6, so players run and foul as
+  they did.
+- **Ratings** stay in the stats' own units: centred on 160 instead of 100,
+  with bands at 165+ / 157–164.
+- **Tournaments:** the simulated results weigh a rating gap 1/1.6 as much,
+  so they come out as before.
+
+## New character database: full teams, stats and supertechniques
+The roster is rebuilt from the complete character database (5,130
+characters), using the new **`scripts/import-characters.mjs`**. It's a dry
+run by default and `--write` applies it. The 12 MB source isn't
+committed.
+
+The database wins wherever it says something. The **previous roster
+fills in where it's silent**, read from git (commit 8626d06), so
+re-running the import always starts from the same two sources. The
+result is 5,269 cards.
+
+- **Same players, same ids.**
+  - The database's ids ("mark-evans-1") are unrelated to ours, so each
+    current card is matched to its new counterpart by name + game, and by
+    name alone for the 9 characters the database puts under another game
+    (e.g. Nathan Swift, GO1 → GO2).
+  - 4,936 cards keep their id, pixel portrait and PT/stamina, so saved
+    squads, tournaments and stories still point at the same players.
+  - Stats were already the database's level-50 numbers.
+- **What's new.**
+  - 194 characters, including **98 coaches and 44 managers**, who are now
+    pickable with a COACH / MANAGER tag on their card.
+  - New characters show the database's official art, with their initials
+    layered underneath in case that server can't be reached.
+  - PT and stamina have no relation to stats, so a new character gets a
+    stable value from its id, within the roster's existing range.
+- **Teams follow the database.**
+  - 43 teams are renamed, e.g. Royal → Royal Academy, Knights of Queen →
+    Queen's Knights, Eito → Prodigy Grammar, Kaiou → Pirates Cove, Genei →
+    Mirage, Protocol Cascade → Perfect Cascade, Garu → Gahl.
+  - **409 players the database calls Unaffiliated keep their previous
+    club** (Inazuma Town 39, Nihon 24, Tokugawa 16, Wrong Crowd 15, Ghoul
+    Hangers 14…), under its current name.
+  - **A player counts for every team the database lists them under**
+    (`otherTeams`, from its "Raimon, Inazuma National" field; 265 extra
+    memberships).
+    - Every place that reads a team goes through `_teamsOf` / `_playsFor`:
+      filters, "Select from here", tournament entrants, story rivals and
+      heroes.
+    - That brings back Chaos (IE2), Chrono Storm (GO2), Protocol Omega 2.0
+      and 3.0, Team Zero, Dark Angels and others.
+    - The card itself shows the main team.
+  - 194 team-eras can field a full XI.
+  - `src/data/team-renames.json` maps old names to new, so a tournament or
+    story saved before the import still finds its teams.
+  - `public/teams.json` kit colours were renamed to match. Every card
+    still gets a team colour: the kit if the team has one, else its old
+    colour, else the one most of its players had before, else one
+    generated from the name.
+- **Supertechniques are the database's full lists**, both learning
+  branches included: shot, dribble, defense and keeper.
+  - Awakenings, keshin, mix-max, totems and modes have no confrontation
+    here and are left out.
+  - Source power maps onto the game's scale with the same table as
+    before: 30/50/60/70/85/100 → power 61/75/82/89/99/110, PT 10/18/21/24/30/35.
+  - The strongest per category is the main one.
+- **Removed and merged.**
+  - **182 previous cards with no counterpart are kept as they were**:
+    175 Victory Road extras and a handful of others. Their techniques are
+    on the old scale, which goes down to power 55.
+  - 42 identical entries in the database merged into one card each. The
+    same character listed with *different* stats (Fei Rune, GO2) stays as
+    two cards.
+- **Story runs** use the new team names.
+  - IE2 keeps Chaos.
+  - GO2 adds Protocol Omega 2.0 and 3.0 and can play as Chrono Storm.
+  - GO1 plays as Raimon First Squad.
+  - GO3 can play as Earth Eleven, adding Naiadi and Magmavia Eleven.
+  - IE2 has no "Play as Raimon" any more. The previous roster's IE2
+    Raimon players were recruits, and the database gives their home clubs
+    (Shawn Froste → Alpine).
+
+## Story mode: each game's run, rival by rival
+A new **📖 Story** mode plays one game's canonical run in order, against
+the real teams. The runs live in `src/data/story.js` (`STORY_RUNS`):
+
+| Run | From → to | Matches |
+|---|---|---|
+| IE1 Football Frontier | Royal → Zeus | 10 |
+| IE2 Alius Academy | Gemini Storm → Genesis | 7 |
+| IE3 FFI | Big Waves → Little Gigantes | 9 |
+| GO1 Holy Road | Eito → Dragon Link | 8 |
+| GO2 Chrono Stone | Protocol Omega → Garu | 7 |
+| GO3 Galaxy | Big Waves → Big Bang | 8 |
+
+**Which teams made it in.** A rival needs at least `STORY_MIN_PLAYERS`
+(10) of its own players in that game; any gap is filled like a
+hand-built rival. Several canonical opponents are missing for that
+reason: Protocol Omega 2.0, Zanark's Domain and Ragnarok in GO2, and
+most of the GO3 planets. Those runs use the next-best real teams, and a
+test checks every listed rival can be fielded. Reordering a run is just
+editing its list.
+
+**How a run plays:**
+- You build a squad that stays locked for the run, like a tournament.
+  Difficulty and half length are locked too.
+- Where the roster has the protagonist team, "⭐ Play as Raimon (IE1)"
+  fields its strongest XI by position (IE1, IE2, GO1).
+- The panel shows the ladder: ✓ for rivals beaten, with the score; ▶ for
+  the next one; 🔒 for the rest.
+- A level game goes to golden-goal overtime, so every match has a winner.
+- Win and you move on. Lose and you get "Try again" on the same rival,
+  with the number of tries shown.
+- "📖 Continue the story" at full time reloads straight back to the
+  ladder. Finishing a run marks it ✓ and counts it in your profile's
+  career record (📖).
+
+## Career record in the profile, and tournament top scorers
+The profile now keeps a **career record** alongside your name and squads,
+shown under "Career" in the profile section. For example:
+"20 played · 12W 3D 5L · 41–22 goals · 🏆 2 · 📖 1", plus your top 3
+scorers.
+
+- **What's tracked:** played, won/drawn/lost, goals for and against,
+  tournaments won, story runs completed, and goals per player (your side
+  only, taken from the match report).
+- **When it's recorded:** `_showFullTime` records every match in every
+  mode. In multiplayer each browser records its own side.
+- **In the file:** it goes into the downloaded profile automatically.
+  `_cleanRecord` treats it like the rest of the file: numbers are whole,
+  non-negative and capped, scorers are trimmed to the top 100, and an
+  older file without a record starts at zero.
+- **On import:** records can't be added together, since re-importing
+  your own backup would double it. So the record with more matches behind
+  it wins.
+
+The Career block sits below the saved squads, just above Download /
+Import.
+
+**Tournaments** now also keep your top scorers ("⚽ Your top scorers"
+under the bracket or table). Only your own fixtures count, because the
+others are simulated and have no scorers. Winning a tournament adds a 🏆
+to the career record.
+
+## Element effects for supertechniques, saves and goals
+A supertechnique used to show only a ring in the team's colour and its
+name. It now also bursts in the user's **element** (`ELEMENT_FX`):
+
+- 🔥 **Fire:** orange embers rising.
+- 🌿 **Wood:** green leaves drifting.
+- 💨 **Air:** fast blue-white streaks.
+- ⛰️ **Earth:** brown chunks thrown up that fall back down.
+
+Players with no known element get a neutral gold spark. Moves of power 95
+or more also shake the camera.
+
+A shot's technique stays hidden at the strike (the keeper picks blind),
+so its burst plays at the first face-off of the shot, whether a block or
+the keeper.
+
+Two more effects:
+- **Save:** the keeper gets a white-gold flash and a "SAVE!" pop.
+- **Goal:** confetti in the scorer's colours rains over the whole screen,
+  with a flash and a shake. It's screen-fixed because the camera recentres
+  on the kickoff at that same moment.
+
+Everything rides in the synced `confrontResult.fx`, so the client sees
+the same. `prefers-reduced-motion` turns off the shakes and flashes. The
+particles use a single 4px texture generated on first use.
+
+## Match report and Rematch
+Full time used to show only the score, then reload to the menu after 9
+seconds. It now shows a **match report** and waits for you:
+
+- **Scorers** for each side, with the minute (play time scaled onto 90',
+  so it reads the same whatever the half length; overtime goals show as
+  90+n').
+- **A stat table**: shots (on target), possession %, duels won, saves,
+  blocks and supertechniques used.
+- **An MVP** with portrait: 3 points a goal, 2 a save, 1 a duel won or a
+  block, with a tie going to the winning side.
+
+The host counts everything where it's decided (`_stat` / `_recordGoal`
+in `_startShot`, `_nextShotStage`, `_applyConfrontOutcome`, `_shotGoesIn`,
+and possession per tick in `_hostUpdate`). The finished report rides
+along in the state sent to the client once the clock ends, so both
+players see the same one.
+
+**What next:**
+- **Rematch** (vs AI only) starts the same two squads again, with the
+  same half length and difficulty.
+- **Back to the tournament** reopens the bracket after a tournament
+  fixture.
+- **Menu** goes home. Multiplayer only offers Menu.
+
+All three still go through the page reload (the scene's controls are
+bound once). They leave a note in `sessionStorage` that `_consumeResume`
+reads once after the roster loads.
+
+## Type-to-search Team and Game filters
+The Team filter was a native dropdown with 100+ entries, era sub-options
+included, which is slow to scroll, especially on a phone. Team and Game
+are now type-to-search boxes (`_makeCombobox`). Typing narrows a list of
+suggestions: "rai" gives Raimon and each of its eras ("Raimon · IE2
+(10)"), and "ie2" finds every team's IE2 era. Matching ignores case and
+accents. Names starting with what you typed come first, then a word
+starting with it, then anything containing it. Pick with a tap or click,
+or with ↑/↓ and Enter. Escape or clicking away puts back what was
+selected, so half-typed text never becomes a filter, and emptying the
+box means "All". Suggestions come from the same linked, counted options
+as before, so a chosen game still narrows the team suggestions and vice
+versa. The hidden `<select>`s remain the source of truth, so the ✕
+buttons, "whole team" and the list filtering work unchanged. Position
+stays a plain dropdown.
+
+**Browsing the list.** The suggestions can also just be scrolled to see
+what's there. Opening a box that already has a pick shows every team
+(the pick's own text used to filter the list down to itself) and centres
+on the current pick; only typing turns the text into a search. Rows now
+pick on `click` instead of `pointerdown`, so a finger that starts a scroll
+on a phone no longer chooses the row under it. The list has a ▾ caret,
+`touch-action: pan-y` and `overscroll-behavior: contain` so it scrolls
+without moving the drawer behind it, and a taller `min(320px, 45vh)` cap.
+
+**Earth icon.** The Earth element is now shown with a mountain (⛰️)
+instead of a ⚡ spark, in the element badges, duel cards and duel text
+(`ELEMENT_ICON`). ⚡ stays for the shot technique and Kick.
+
+## A gentler AI on Normal
+The smarter AI turned out too sharp on Normal, so how hard the rival
+defends and attacks now scales with difficulty (new `AI_LEVELS` fields):
+
+| | Easy | Normal | Hard | Expert |
+|---|---|---|---|---|
+| Second presser engages within | 150px | 180px (was 230) | 230 | 260 |
+| Marks runners within | 150px | 180px (was 220) | 220 | 240 |
+| Marking tightness | 0.35 | 0.45 (was 0.6) | 0.6 | 0.7 |
+| Through-ball chance | 15% | 30% (was 50%) | 80% | 100% |
+| Extra pass range | 0 | 0 (was 40px) | 100 | 160 |
+| Best-aim chance on shots | 30% | 50% (was 65%) | 85% | 100% |
+
+Hard keeps exactly the previous behaviour, and Expert pushes a little
+further. This only applies to the AI rival: your own teammates, and both
+sides in multiplayer, keep the Hard defaults.
+
+## Remaining duplicate players cleaned up
+An audit of the roster found a few duplicates the earlier clean-up
+(which only removed exact copies) had missed. `scripts/dedupe-roster.mjs`
+(a dry run by default, `--write` to apply) fixes them:
+- **8 same-card duplicates merged, 9 entries removed (5127 → 5118).**
+  These were the same character in the same game, team and position with
+  the same stats, but not identical, so they survived before. Fei Rune had
+  3 Chrono Storm cards in GO2 with 0, 1 and 2 techniques. Cerise Blossom
+  and Keenan Sharpe each had a copy missing a technique, and Laraya Orbes'
+  two copies had different dribbles. Philip Star, Lucas Star, Alexander
+  Allegrov and Victorio Cryptix were straight copies. Each keeps its
+  lowest id and all of its techniques. The dropped ids are stored as
+  `aliases`: `getPlayerById` resolves them, and saved squads load them as
+  the kept player without placing them twice.
+- **12 cards no longer list a technique twice** (e.g. Mark Evans had God
+  Hand twice).
+- **Deliberately left alone:**
+  - The same character on different teams (Arion, Riccardo, Ark, Victor
+    Blade, Fei Rune on The Lagoon).
+  - Shawn Froste's DF and FW cards in IE2, his two real roles.
+  - Victor Blade's Chrono Storm and Earth Eleven stat lines match other
+    characters' exactly, which looks like a pairing slip in the earlier
+    stat import. The source dump would be needed to correct it.
+- **Stats are shared templates:** only about 30 distinct stat lines cover
+  the whole roster, so many different characters have identical stats.
+  That's how the source data (zukan.inazuma.jp) is, not something we
+  introduced.
+
+## Linked Browse Players filters
+The Game, Team and Position filters now narrow each other
+(`_refreshFilterOptions`): each dropdown only offers what the other two
+leave, with player counts. Pick a game and the team list shows only that
+game's teams, as plain options since the era is implied. Pick a team and
+the game list shows only its games. Positions with nobody left are
+greyed out. A selection that's still on offer is kept (an era option
+becomes the plain team once its game is picked); clearing a filter with
+its ✕ brings the full lists back.
+
+## Golden-goal overtime
+A match that's level when the second half runs out no longer ends in a
+draw. It goes to overtime (`_startOvertime`): a break with an "Overtime —
+next goal wins!" banner, the side that kicked off the match kicks off
+again, then play goes on with no time limit. The scoreboard clock counts
+up ("Overtime — 1:12 · golden goal"). The first goal ends the match after
+its celebration, and the full-time screen says "You win in overtime!" or
+"You lose in overtime". League tournament fixtures are the exception:
+there a draw is a real result worth a point each, so they still end
+level. Knockout fixtures now always get a winner on the pitch instead of
+a coin flip.
+
+## Aimed shots, keeper reach, chain shots and a shot preview
+- **Tap to shoot, then aim and pick.** With the ball, one tap in the goal
+  area shoots. Play freezes on a solo "strike" stage, aimed at the tapped
+  spot (clamped inside the posts). While it's frozen, tapping the goal
+  moves the aim (`_setShotAim`, sent as `shotAim` input so a multiplayer
+  guest aims too). Picking a supertechnique or "Normal shot" fires at the
+  current aim; if the timer runs out it's a normal shot. Penalties get the
+  same pause.
+- **Keeper reach.** Keepers now slide along their line after the ball to
+  cover the near post (`KEEPER_TRACK`). The keeper's save power is scaled
+  by how close they stand to the shot's line (`_keeperReach`: full within
+  20px, nothing beyond 150px). A keeper behind the kicker (dribbled past),
+  stunned or sent off can't save it at all: the shot goes into the empty
+  net with no keeper confrontation.
+- **Chain shots.** The first teammate standing on the shot's line (within
+  60px, same stretch of it as a blocker) can chain onto it with a shot
+  supertechnique of their own, adding its power to the shot. "Let it run"
+  adds nothing, and a teammate without the PT is skipped. The line and the
+  rest of the sequence (`_buildShotStages`) are worked out when the strike
+  fires, from the final aim. The ball then meets things in order: blocker
+  and/or chainer, then keeper. The shooter is locked in after the strike,
+  and the strike banner doesn't name their technique, so the keeper still
+  picks blind. Power carries through: a beaten blocker still trims it
+  (`BLOCK_PASS_PENALTY`), and the VS card shows the combined move, e.g.
+  "Fire Tornado + Dragon Tornado". Penalties skip blockers and chainers.
+- **Shot preview.** While you have the ball the goal mouth is lit as the
+  shooting area. From the strike pause on, the shot is drawn as a cone
+  from the kicker to the aimed spot. It's only drawn as a cone: blockers,
+  chainers and reach are judged along its centre line. The would-be
+  blocker is ringed red, a teammate who can chain is ringed gold (dimmed
+  without PT), and the keeper's ring goes green to red with their reach.
+  There's no on-pitch chance text; the save panel still shows the keeper's
+  reach %. It shows on both screens.
+- **AI aiming.** The AI picks the spot its opponent's keeper covers worst,
+  avoiding blockers and favouring a teammate who can chain. New
+  `aimSkill` per difficulty level sets how often it takes the best aim.
+
+## Smarter AI: pressing, marking, spacing, wings and passes that read you
+Off-ball movement (both teams, so your own teammates too):
+- **Pressing.** Besides the player chasing the ball, the one teammate
+  nearest the carrier (within `PRESS_ENGAGE_RANGE`) now commits to a
+  goal-side press. It replaces the old weak 35% drift of everyone within
+  190px (`_defensivePlan`).
+- **Marking runners.** Remaining defenders and midfielders pick up nearby
+  attackers, one marker each and runs from behind the ball first. They
+  stand goal-side of them and a little across toward the ball, while
+  keeping part of their formation spot.
+- **Spacing.** No off-ball target settles within `SPACING_MIN` (120px) of
+  a teammate (`_applySpacing`).
+- **Wings.** In possession, wide slots hold near their touchline
+  (`_holdWidth`), and supporters step up only part of the way to the
+  carrier's line, so the side no longer converges on one row.
+
+AI ball carrier (solo rival only):
+- **Dribbling.** It picks the most open of five lanes across the width
+  instead of always driving at the centre, so it goes down a wing when the
+  middle is shut. It cuts inside once in shooting range
+  (`_aiCarrierTarget`).
+- **Passing reads your players' positions** (`_aiPickPassTarget`):
+  - A pass is ruled out if any of your players can reach its rolling part
+    before the ball and the receiver do. The chipped first half sails over
+    everyone.
+  - A receiver with one of your players on them is not an option.
+  - Passes that take your players out of the game, or switch play to the
+    far wing, score higher.
+  - An onside runner near your back line can be found with a through ball
+    into the space behind it. Higher difficulty levels look further
+    (`vision`) and try through balls more often (`through`).
+- **Fewer passes.** A newly received ball is held for 0.9s, and unpressured
+  it only passes when the pass gets past someone or is a through ball.
+
+## Tournament match length, team names on the scoreboard, downloadable profile
+- **Back to the menu from the squad editor.** A "← Menu" button at the top
+  of the editor returns to the mode-select screen without losing the squad
+  you've built, so you can switch between solo, multiplayer and tournament.
+  If you had already confirmed a multiplayer squad, backing out withdraws it
+  (locally, and by sending the opponent a `{retracted:true}` squad, handled
+  in `_onRemoteSquad`) so a match can't start against someone who has left.
+- **Match length is picked once per tournament.** Every fixture ends in a
+  page reload, which reset the half length to the default, so it had to be
+  reselected before each match. The half length chosen in the squad editor
+  is now stored with the tournament (`halfLengthS`), reapplied before every
+  fixture, and shown in the bracket header.
+- **Team names on the scoreboard.** The goal counter now reads
+  `Raimon  2 - 1  Rival`. Your side uses the squad editor's team name, then
+  the profile's player name, then "You". The rival is "Rival" in solo, the
+  real team (and era) in a tournament, and the opponent's own team name in
+  multiplayer (squad payloads now carry a `name`). The `.score` text itself
+  is unchanged, so full-time scoring still reads it the same way.
+- **Profile file.** A collapsible 👤 Profile section sits below the
+  formation (pitch, bench and save row) in the squad editor, and folds away
+  with the Formation toggle. It holds your player name and a list of saved
+  squads. Save the current
+  squad (saving under an existing name updates it), rename, update from the
+  editor, load or delete. The whole profile can be downloaded as
+  `inazuma-profile.json`, edited by hand if you like, and imported back —
+  import merges by squad name and is validated (unknown formations fall back
+  to 4-4-2, sizes are capped, names are rendered as text, never HTML). Still
+  no backend: the working copy lives in `localStorage`, the file is the
+  backup/transfer format. It replaces the old one-slot 💾 Save / 📂 Load
+  buttons, which are gone; a squad saved with them is moved into the profile
+  the first time the game loads.
+
+## Browse-players filters, team names, a clearer font, and a few smaller fixes
+A batch of independent gameplay/UX requests, landed together:
+
+- **Team name.** The squad editor has a team-name field next to Save; it's
+  kept with the saved squad (still local, this browser only) and restored
+  by Load. The whole save row moved below the pitch and bench as a smaller,
+  secondary control rather than sitting above the formation. Accounts with profile-saved formations were built alongside this
+  and then dropped before merging — it stays a no-backend game for now.
+- **Dice squad stars.** The 🎲 random squad now always includes five standout
+  starters: one from the top 10 of their position, two more from the top 30,
+  and two from the top 40 (ranked within each position). Before, it was 2–3
+  picks from the top 20%, which with ~800 players per position rarely felt
+  like stars. The other 6 starters and the bench stay fully random.
+- **Browse Players filters.** Added a position filter (GK/DF/MF/FW,
+  independent of the existing "filling this pitch spot" scope-lock), a
+  small "✕" next to every filter to clear just that one, and wrapped the
+  whole filter row in its own collapsible section (default open) so it can
+  be tucked away without closing the player list itself.
+- **Font.** Swapped `Press Start 2P` (headers, scoreboard, confrontation UI)
+  for `Silkscreen` — still a genuine pixel font, but without the
+  1/I/l, O/0, S/5 ambiguity at the sizes this UI actually uses it at.
+- Removed the landing page's descriptive paragraph.
+- Added a goalkeeper-save sound (`playGkSave` in `src/audio/sfx.js`) — a
+  descending two-note parry, distinct from the existing kick/pass/goal/
+  whistle tones, triggered from the keeper-save branch of
+  `_applyConfrontOutcome`.
+
 ## Multiplayer signaling: back to public BitTorrent trackers, no backend
 Dropped the Firebase Realtime Database signaling (and the `firebase`
 dependency) to keep the game fully peer-to-peer with no backend of our own.

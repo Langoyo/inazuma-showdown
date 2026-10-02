@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Inazuma Showdown</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400..700&family=Jersey+10&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Pixelify+Sans:wght@400..700&family=Jersey+10&display=swap">
   <style>
 
     *, *::before, *::after { box-sizing: border-box; }
@@ -36,7 +36,9 @@
       margin: 0; padding: 0; background: var(--ink) !important; overflow: hidden;
       touch-action: none; font-size: 17px;
     }
-    h1, h2, h3 { font-family: 'Press Start 2P', 'Courier New', monospace !important; font-weight: normal; }
+    /* Press Start 2P had ambiguous glyphs at small sizes (1/I/l, O/0, S/5);
+       Silkscreen is still a genuine pixel font but keeps those distinct. */
+    h1, h2, h3 { font-family: 'Silkscreen', 'Courier New', monospace !important; font-weight: normal; }
 
     /* ------------------------------------------------------------------ Buttons
        Every button on the page uses nes.css's own real `nes-btn` class (plus
@@ -86,7 +88,16 @@
       position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10;
       background: var(--panel); padding: 6px 18px; border: 3px solid #000; text-align: center;
     }
-    #scoreboard .score { font-family: 'Jersey 10','Press Start 2P',monospace; font-size: 26px; letter-spacing: 2px; }
+    #scoreboard .score-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
+    #scoreboard .team-name {
+      font-size: 11px; max-width: 90px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; opacity: 0.9;
+    }
+    #scoreboard .team-name:empty { display: none; }
+    #scoreboard .team-name#score-name-a { text-align: right; }
+    #scoreboard .team-name#score-name-b { text-align: left; }
+    #scoreboard .score { font-family: 'Jersey 10','Silkscreen',monospace; font-size: 26px; letter-spacing: 2px; }
+    @media (max-width: 480px) { #scoreboard .team-name { max-width: 56px; font-size: 10px; } }
     #scoreboard .clock  { font-size: 13px; opacity: 0.85; margin-top: 3px; }
     #sp-bar-wrap {
       position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
@@ -131,7 +142,7 @@
     }
     .duel-card.loser { opacity: 0.35; filter: grayscale(1); transform: scale(0.92); }
     #duel-vs {
-      font-family: 'Press Start 2P',monospace; font-size: 18px; color: var(--red);
+      font-family: 'Silkscreen',monospace; font-size: 18px; color: var(--red);
       text-shadow: 2px 2px #000; flex: 0 0 auto;
     }
 
@@ -139,7 +150,7 @@
       position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 20;
       display: none; flex-direction: column; align-items: center; gap: 8px; max-width: 96vw;
     }
-    #confrontation-title { font-family: 'Press Start 2P',monospace; background: var(--panel); border: 3px solid #000; padding: 6px 14px; font-size: 13px; }
+    #confrontation-title { font-family: 'Silkscreen',monospace; background: var(--panel); border: 3px solid #000; padding: 6px 14px; font-size: 13px; }
     #confrontation-player-info { background: var(--panel); border: 3px solid #000; padding: 5px 12px; font-size: 14px; }
     #confrontation-timer-wrap { width: 220px; height: 10px; background: var(--panel-2); border: 2px solid #000; overflow: hidden; }
     #confrontation-timer-fill { height: 100%; width: 100%; background: var(--gold); transition: none; }
@@ -346,7 +357,34 @@
       background: rgba(255,217,102,0.12); border: 2px solid var(--gold);
     }
     #pick-scope b { color: var(--gold); }
-    #squad-save-status { font-size: 13px; opacity: 0.9; color: var(--green); }
+    #squad-name-row {
+      display: flex; gap: 6px; align-items: center;
+      margin-top: 12px; padding-top: 10px; border-top: 2px dashed rgba(255,255,255,0.12);
+    }
+    #squad-name-row input { flex: 1; min-width: 110px; font-size: 12px; padding: 4px 8px; }
+
+    /* ---- profile section (under the team-name row in the squad editor) */
+    #profile-section { margin-top: 10px; padding-top: 10px; border-top: 2px dashed rgba(255,255,255,0.12); }
+    #profile-section summary { cursor: pointer; font-size: 12px; user-select: none; }
+    .profile-body { width: 100%; display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+    .profile-hint { font-size: 11px; opacity: 0.7; }
+    .profile-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+    .profile-field input { font-size: 13px; padding: 6px 8px; }
+    .profile-section-title { font-size: 12px; opacity: 0.8; margin-top: 4px; }
+    #profile-record { font-size: 12px; line-height: 1.5; }
+    .profile-top-scorers { opacity: 0.8; font-size: 11px; }
+    #profile-squads { display: flex; flex-direction: column; gap: 6px; }
+    .profile-squad {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+      padding: 6px; background: var(--panel-2); border: 1px solid rgba(255,255,255,0.15);
+    }
+    .profile-squad input { flex: 1; min-width: 120px; font-size: 12px; padding: 4px 6px; }
+    .profile-squad .meta { flex-basis: 100%; font-size: 10px; opacity: 0.7; }
+    .profile-squad .nes-btn, .profile-file-row .nes-btn { font-size: 11px; padding: 2px 8px; margin: 0; }
+    .profile-file-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .profile-empty { font-size: 11px; opacity: 0.6; }
+    #profile-status { font-size: 11px; color: var(--green); min-height: 14px; }
+    #profile-status.is-error { color: var(--red); }
 
     /* ---- topological squad editor */
     #squad-editor { width: 100%; max-width: 500px; }
@@ -395,9 +433,45 @@
     #squad-place-cancel-btn { font-size: 12px; padding: 5px 10px; }
 
     /* ---- search list that feeds the editor */
+    #squad-filters-toggle { width: 100%; max-width: 500px; text-align: left; font-size: 12px; margin-bottom: 8px; }
+    #squad-filters-body.filters-hidden { display: none; }
     #squad-search-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; width: 100%; max-width: 500px; }
     #squad-search-row input, #squad-search-row select { flex: 1; }
     #squad-search-row button { font-size: 13px; }
+    /* Each filter's own reset "x", sat right against its field rather than
+       loose in the row, so it's obviously "clear this one" and not a
+       stray button. */
+    .filter-field { display: flex; flex: 1; min-width: 120px; gap: 4px; align-items: stretch; }
+    .filter-field input, .filter-field select { flex: 1; min-width: 0; }
+    /* Type-to-search filters (see _makeCombobox): the real <select> stays
+       hidden as the source of truth, the suggestion list drops under the box. */
+    .combo { position: relative; flex: 1; min-width: 0; display: flex; }
+    .combo-native { display: none; }
+    /* A caret so the box reads as a dropdown you can open and scroll, not
+       only a search field. */
+    .combo::after {
+      content: '▾'; position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      font-size: 12px; opacity: 0.7; pointer-events: none;
+    }
+    .combo-input { padding-right: 22px; }
+    .combo-list {
+      position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
+      margin: 2px 0 0; padding: 0; list-style: none;
+      max-height: min(320px, 45vh); overflow-y: auto;
+      touch-action: pan-y; overscroll-behavior: contain;
+      background: var(--panel); border: 3px solid #000;
+    }
+    /* The team box sits in the left column: let its list run wider than the
+       half-width field so "Team · Era (n)" fits on one line. */
+    #squad-team-filter-list { right: auto; min-width: min(280px, calc(100vw - 32px)); }
+    .combo-list li { padding: 8px 10px; min-height: 32px; box-sizing: border-box; font-size: 13px; cursor: pointer; }
+    .combo-list li.active, .combo-list li:hover { background: var(--gold); color: #1b1b1b; }
+    .combo-list li.disabled, .combo-list li.combo-empty { opacity: 0.45; cursor: default; background: none; color: inherit; }
+    .filter-reset-btn {
+      flex: 0 0 auto; width: 26px; border: 2px solid #000; background: var(--panel-2);
+      color: var(--white); cursor: pointer; font-size: 12px; line-height: 1;
+    }
+    .filter-reset-btn:hover { background: var(--panel); }
     #squad-pick-list {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(126px,1fr));
       gap: 8px; width: 100%; max-width: 500px; padding-bottom: 4px;
@@ -448,6 +522,7 @@
     .pick-card.in-squad   { border-color: var(--gold); opacity: 0.85; }
     .pick-card.selected   { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold); }
     .pick-card .pick-name { font-weight: bold; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .role-tag { display: inline-block; padding: 0 4px; border: 1px solid var(--gold); color: var(--gold); font-size: 9px; text-transform: uppercase; }
     #pick-count { font-size: 13px; opacity: 0.75; margin-bottom: 6px; }
 
     /* ---- sub panel: pitch + bench together, same look as the squad editor */
@@ -465,10 +540,43 @@
       padding: 10px; display: flex; flex-direction: column; align-items: center; gap: 4px;
     }
     /* ---- full-time screen */
-    #fulltime-score    { font-family: 'Jersey 10','Press Start 2P',monospace; font-size: 52px; margin: 10px 0 12px; }
-    #fulltime-verdict  { font-size: 17px; color: var(--gold); margin-bottom: 20px; }
-    #fulltime-menu-btn { padding: 12px 26px; font-size: 15px; }
-    #fulltime-countdown { font-size: 13px; opacity: 0.8; margin-top: 12px; }
+    #fulltime-panel    { overflow-y: auto; }
+    /* ---- story mode */
+    #story-panel { overflow-y: auto; }
+    #story-body  { width: 100%; max-width: 480px; }
+    .story-run { display: flex; gap: 10px; align-items: center; justify-content: space-between; text-align: left; padding: 10px; margin-bottom: 8px; border: 3px solid #000; background: var(--panel-2); }
+    .story-run-title { font-size: 14px; }
+    .story-done { font-size: 11px; color: var(--gold); }
+    .story-meta { font-size: 11px; opacity: 0.75; margin-top: 2px; }
+    .story-head { font-size: 14px; color: var(--gold); margin-bottom: 8px; }
+    .story-ladder { list-style: none; padding: 0; margin: 0 0 14px; text-align: left; }
+    .story-step { padding: 6px 8px; border-bottom: 2px solid rgba(255,255,255,0.08); opacity: 0.55; font-size: 13px; }
+    .story-step.won { opacity: 0.85; }
+    .story-step.current { opacity: 1; background: rgba(255,217,102,0.12); border-left: 4px solid var(--gold); }
+    .story-mark { display: inline-block; width: 22px; }
+    .story-score { float: right; font-size: 12px; }
+    .story-step-note { font-size: 11px; opacity: 0.75; margin-left: 22px; }
+    .story-complete { font-size: 16px; color: var(--gold); margin-bottom: 10px; }
+    #fulltime-score    { font-family: 'Jersey 10','Silkscreen',monospace; font-size: 52px; margin: 6px 0 8px; }
+    #fulltime-verdict  { font-size: 17px; color: var(--gold); margin-bottom: 14px; }
+    /* Match report: each side's scorers, a stat table read from the middle
+       out (home left, away right), and the MVP. */
+    #fulltime-report   { width: 100%; max-width: 420px; font-size: 13px; margin-bottom: 16px; }
+    .ft-goals { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; text-align: left; margin-bottom: 12px; }
+    .ft-goals > div:last-child { text-align: right; }
+    .ft-team  { color: var(--gold); font-size: 12px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ft-none  { opacity: 0.5; }
+    .ft-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+    .ft-table td, .ft-table th { padding: 4px 6px; border-bottom: 2px solid rgba(255,255,255,0.08); }
+    .ft-table th { font-weight: normal; opacity: 0.75; font-size: 12px; }
+    .ft-table td:first-child { text-align: left; } .ft-table td:last-child { text-align: right; }
+    .ft-mvp { display: flex; align-items: center; gap: 12px; justify-content: center; text-align: left; padding: 8px; border: 3px solid var(--gold); background: rgba(255,217,102,0.08); }
+    .ft-mvp-portrait { width: 48px; height: 48px; flex: 0 0 auto; border: 2px solid #000; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+    .ft-mvp-tag  { font-size: 11px; color: var(--gold); }
+    .ft-mvp-name { font-size: 15px; }
+    .ft-mvp-line { font-size: 11px; opacity: 0.8; }
+    #fulltime-actions  { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+    #fulltime-actions .nes-btn { padding: 10px 18px; font-size: 14px; }
 
     #confirm-squad-btn { padding: 10px 24px; font-size: 14px; }
     #squad-status { font-size: 13px; opacity: 0.9; }
@@ -487,7 +595,14 @@
 </head>
 <body>
   <div id="room-ui">Room: <span id="room-code">-</span></div>
-  <div id="scoreboard"><div class="score">0 - 0</div><div class="clock" id="match-clock">1st half — 3:00</div></div>
+  <div id="scoreboard">
+    <div class="score-row">
+      <span class="team-name" id="score-name-a"></span>
+      <div class="score">0 - 0</div>
+      <span class="team-name" id="score-name-b"></span>
+    </div>
+    <div class="clock" id="match-clock">1st half — 3:00</div>
+  </div>
   <div id="mode-badge">🤖 Solo (vs AI)</div>
 
   <!-- Explanation popup for every "ⓘ" icon in the app — see GameScene._initInfoIcons -->
@@ -547,12 +662,16 @@
   </div>
 
   <!-- ===================== FULL TIME ===================== -->
-  <div id="fulltime-panel" class="panel-overlay" style="justify-content:center;text-align:center;">
+  <div id="fulltime-panel" class="panel-overlay" style="justify-content:safe center;text-align:center;">
     <h2 style="font-size:20px;">Full time</h2>
     <div id="fulltime-score">0 - 0</div>
     <div id="fulltime-verdict"></div>
-    <button id="fulltime-menu-btn" class="nes-btn is-primary">Back to the menu</button>
-    <div id="fulltime-countdown"></div>
+    <div id="fulltime-report"></div>
+    <div id="fulltime-actions">
+      <button id="fulltime-rematch-btn" class="nes-btn is-success">🔁 Rematch</button>
+      <button id="fulltime-continue-btn" class="nes-btn is-success" style="display:none">🏆 Back to the tournament</button>
+      <button id="fulltime-menu-btn" class="nes-btn is-primary">Menu</button>
+    </div>
   </div>
 
   <!-- ===================== LANDING ===================== -->
@@ -560,10 +679,7 @@
     <button id="sfx-toggle-btn" class="nes-btn is-compact" style="position:absolute;top:10px;right:10px;" title="Toggle sound effects">🔊</button>
     <!-- Text placeholder for now — swap for an <img> once there's a real logo. -->
     <div id="landing-logo">🏆</div>
-    <h1 id="landing-title" style="font-size:22px;line-height:1.5;margin-bottom:10px;">Inazuma Showdown</h1>
-    <p style="font-size:12px;opacity:0.75;max-width:380px;margin-bottom:26px;">
-      A real-time football game, controlled with the pointer — play solo against the AI, or head-to-head with a friend over the internet.
-    </p>
+    <h1 id="landing-title" style="font-size:22px;line-height:1.5;margin-bottom:26px;">Inazuma Showdown</h1>
     <button id="landing-play-btn" class="nes-btn is-primary" style="font-size:16px;padding:12px 34px;">▶ Play</button>
   </div>
 
@@ -574,6 +690,7 @@
       <button id="mode-solo-btn" class="nes-btn is-primary">🤖 Solo (vs AI)</button>
       <button id="mode-multi-btn" class="nes-btn is-warning">👥 Multiplayer</button>
       <button id="mode-tournament-btn" class="nes-btn is-success">🏆 Tournament</button>
+      <button id="mode-story-btn" class="nes-btn is-error">📖 Story</button>
     </div>
     <div id="mode-multi-panel" style="display:none;max-width:380px;">
       <p style="font-size:11px;opacity:0.75;margin-bottom:14px;">
@@ -582,7 +699,7 @@
       <div style="margin-bottom:16px;">
         <div style="font-size:12px;margin-bottom:4px;">Your code:</div>
         <div style="display:flex;gap:6px;justify-content:center;align-items:center;">
-          <span id="mode-own-code" style="font-family:'Jersey 10','Press Start 2P',monospace;font-size:20px;letter-spacing:3px;background:var(--panel-2);border:3px solid #000;padding:6px 14px;">-</span>
+          <span id="mode-own-code" style="font-family:'Jersey 10','Silkscreen',monospace;font-size:20px;letter-spacing:3px;background:var(--panel-2);border:3px solid #000;padding:6px 14px;">-</span>
           <button id="mode-copy-code-btn" class="nes-btn is-compact" type="button">📋 Copy</button>
         </div>
       </div>
@@ -596,11 +713,13 @@
 
   <!-- ===================== SQUAD EDITOR (team select) ===================== -->
   <div id="squad-editor-panel" class="panel-overlay">
+    <button id="squad-back-btn" class="nes-btn is-compact" type="button" style="align-self:flex-start;">← Menu</button>
 
     <h2 style="margin-bottom:10px;">Build your squad <span class="info-icon" data-info-title="Building your squad" data-info-body="Tap a player from the list, then tap a pitch or bench spot to place them there — works on an occupied spot too, and bumps whoever was there to the bench (or drops them if the bench is full). Tap two pitch/bench players to swap them instead. Press and hold any player to see their stats. Bench holds up to 5.">ⓘ</span></h2>
 
     <!-- Switch between editing your own squad and the rival's (solo vs AI only —
          a real connected opponent always picks their own team regardless). -->
+    <button id="story-hero-btn" class="nes-btn is-warning is-compact" type="button" style="display:none;margin-bottom:8px;">⭐ Play as</button>
     <div id="squad-side-tabs">
       <button class="squad-side-tab nes-btn is-primary" data-side="me">Your Team</button>
       <button class="squad-side-tab nes-btn" data-side="rival">Rival Team</button>
@@ -642,13 +761,6 @@
           <option value="4-3-1-2">4-3-1-2</option>
         </select>
         <span id="squad-fill-count" style="font-size:11px;opacity:0.75;">0/11 filled</span>
-      </div>
-
-      <!-- Keep the squad you built between sessions (this browser only) -->
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-        <button id="squad-save-btn" class="nes-btn is-primary is-compact">💾 Save squad</button>
-        <button id="squad-load-btn" class="nes-btn is-compact" disabled>📂 Load saved</button>
-        <span id="squad-save-status"></span>
       </div>
 
       <!-- Half length. In multiplayer only the host's choice actually
@@ -722,6 +834,37 @@
         Tap a pitch or bench spot for <b id="squad-place-hint-name"></b>
         <button id="squad-place-cancel-btn" class="nes-btn is-compact">Cancel</button>
       </div>
+
+      <!-- Team name: shown on the scoreboard and used to name the squad when
+           it's saved to the profile below. -->
+      <div id="squad-name-row">
+        <input id="squad-team-name" type="text" class="pixel-select" placeholder="Team name (optional)" />
+      </div>
+
+      <!-- Profile: your name plus every squad you've saved, kept in this
+           browser and exportable as a .json file you can back up, move to
+           another device, or edit by hand and import again. Lives inside
+           #squad-editor so it folds away with the Formation section. -->
+      <details id="profile-section">
+        <summary>👤 Profile</summary>
+        <div class="profile-body">
+          <div class="profile-hint">Saved in this browser. Download it to back it up or move it to another device; you can edit the file by hand and import it back.</div>
+          <label class="profile-field">Your name
+            <input id="profile-name" type="text" class="pixel-select" maxlength="24" placeholder="Player name" />
+          </label>
+          <div class="profile-section-title">Saved squads</div>
+          <div id="profile-squads"></div>
+          <button id="profile-save-current-btn" class="nes-btn is-primary" type="button">＋ Save current squad</button>
+          <div class="profile-section-title">Career</div>
+          <div id="profile-record"></div>
+          <div class="profile-file-row">
+            <button id="profile-download-btn" class="nes-btn" type="button">⬇ Download profile</button>
+            <button id="profile-import-btn" class="nes-btn" type="button">⬆ Import profile</button>
+            <input id="profile-import-file" type="file" accept="application/json,.json" hidden />
+          </div>
+          <div id="profile-status"></div>
+        </div>
+      </details>
     </div>
     </div>
 
@@ -735,10 +878,22 @@
            covered by the drawer once open, same as everything else behind
            it. This is the way to close it again from there instead. -->
       <button id="squad-players-drawer-close" type="button" title="Close">✕</button>
+      <button id="squad-filters-toggle" class="nes-btn is-compact" type="button">▾ Filters</button>
+      <div id="squad-filters-body">
       <div id="squad-search-row">
-        <input id="squad-search" type="text" placeholder="Search player..." />
-        <select id="squad-game-filter"><option value="">All games</option></select>
-        <select id="squad-team-filter"><option value="">All teams</option></select>
+        <span class="filter-field"><input id="squad-search" type="text" placeholder="Search player..." /><button class="filter-reset-btn" data-reset="squad-search" type="button" title="Clear filter">✕</button></span>
+        <span class="filter-field"><select id="squad-game-filter"><option value="">All games</option></select><button class="filter-reset-btn" data-reset="squad-game-filter" type="button" title="Clear filter">✕</button></span>
+        <span class="filter-field"><select id="squad-team-filter"><option value="">All teams</option></select><button class="filter-reset-btn" data-reset="squad-team-filter" type="button" title="Clear filter">✕</button></span>
+        <span class="filter-field">
+          <select id="squad-position-filter">
+            <option value="">All positions</option>
+            <option value="GK">GK</option>
+            <option value="DF">DF</option>
+            <option value="MF">MF</option>
+            <option value="FW">FW</option>
+          </select>
+          <button class="filter-reset-btn" data-reset="squad-position-filter" type="button" title="Clear filter">✕</button>
+        </span>
         <select id="squad-sort-select">
           <option value="rating">Sort: Rating</option>
           <option value="name">Sort: Name</option>
@@ -754,6 +909,7 @@
           <option value="intelligence">Sort: Intelligence</option>
         </select>
         <button id="squad-whole-team-btn" class="nes-btn is-compact" disabled>Select from here</button>
+      </div>
       </div>
       <!-- Shown only while the list is narrowed to the spot you tapped on the
            pitch (see _armEmptySpot / #pick-scope-clear). -->
@@ -790,6 +946,13 @@
     <h2>Tournaments <span class="info-icon" data-info-title="Offline tournaments" data-info-body="Play a knockout or a small league against the game's own real teams. Pick how many teams play, then build your squad — it locks in for the whole tournament once it starts and can't be changed. Opponents are drawn at random from teams with enough named players to field a full XI: in a knockout they get tougher each round you win (your first match is the softest draw, the final is the hardest), while a league keeps one flat difficulty throughout. Every match that doesn't involve you is resolved instantly behind the scenes, so you only ever actually play your own games.">ⓘ</span></h2>
     <div id="tournament-body"></div>
     <button id="tournament-back-btn" class="nes-btn is-compact" style="margin-top:16px;">← Back</button>
+  </div>
+
+  <!-- Story mode: one game's canonical run, rival by rival (see story.js). -->
+  <div id="story-panel" class="panel-overlay">
+    <h2>Story <span class="info-icon" data-info-title="Story mode" data-info-body="Play one game's story, rival by rival, in the order the game has them. Build your squad (or field the game's own team where the roster has it) — it stays locked for the whole run. Win to move on to the next rival; lose and you can try the same match again as many times as you like. Finishing a run marks it complete in your profile.">ⓘ</span></h2>
+    <div id="story-body"></div>
+    <button id="story-back-btn" class="nes-btn is-compact" style="margin-top:16px;">← Back</button>
   </div>
 
   <!-- Camera scroll control: a joystick on touch devices, a WASD-styled

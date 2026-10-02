@@ -19,7 +19,7 @@ test.describe('roster carries the games\' own seven stats', () => {
       for (const p of roster) {
         const vals = NATIVE.map((k) => p.stats[k]);
         if (vals.every((v) => Number.isInteger(v))) complete++;
-        if (vals.every((v) => v >= 50 && v <= 200)) inRange++;
+        if (vals.every((v) => v >= 100 && v <= 260)) inRange++;
         for (const v of vals) { if (v < min) min = v; if (v > max) max = v; }
       }
       return { total: roster.length, complete, inRange, min, max };
@@ -28,10 +28,10 @@ test.describe('roster carries the games\' own seven stats', () => {
     expect(result.total).toBeGreaterThan(5000);
     expect(result.complete).toBe(result.total);
     expect(result.inRange).toBe(result.total);
-    // Sanity that these really are the games' numbers and not a rescale:
-    // the dump spans roughly 80-121 across every stat.
-    expect(result.min).toBeGreaterThan(50);
-    expect(result.max).toBeLessThan(140);
+    // Sanity that these really are the games' level-99 numbers: they span
+    // roughly 128-194 across every stat (1.6× the level-50 80-121).
+    expect(result.min).toBeGreaterThan(110);
+    expect(result.max).toBeLessThan(220);
   });
 
   test('none of the five derived stats survive anywhere', async ({ page }) => {
@@ -65,8 +65,10 @@ test.describe('roster carries the games\' own seven stats', () => {
     expect(kept.withNickname).toBe(kept.total);
     expect(kept.withPosition).toBe(kept.total);
     // Saved squads in localStorage store roster ids and nothing else, so
-    // renumbering would silently break every squad anyone had saved.
-    expect(kept.idsPrefixed).toBe(kept.total);
+    // renumbering would silently break every squad anyone had saved. The
+    // full-database import kept every existing id; only characters new to
+    // the roster carry the database's own ("silvia-woods-17").
+    expect(kept.idsPrefixed).toBeGreaterThan(4900);
     // 96.4% carry at least one supertechnique, which is exactly the rate
     // before the migration — the rest genuinely have none in the data.
     expect(kept.withTechniques / kept.total).toBeGreaterThan(0.96);
