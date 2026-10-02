@@ -68,9 +68,14 @@ const SHOT_CONE_HALF      = 16;   // how wide the drawn cone is at the goal (vis
 // keeper behind the kicker (dribbled past) can't get there at all.
 const KEEPER_REACH_FULL   = 20;
 const KEEPER_REACH_MAX    = 150;
-// Keepers slide along their line after the ball to cover the near post.
-const KEEPER_TRACK        = 0.35;
-const KEEPER_TRACK_MAX    = 42;   // px either side of the goal centre
+// Keepers stand on the line from the middle of their goal to the ball —
+// between the two — this far out: a step off the line with the ball close,
+// further to narrow the angle when it's far. Sideways they cover the whole
+// goal mouth, so a wide attacker pulls them right across to the near post.
+const KEEPER_OUT_FRAC     = 0.12;
+const KEEPER_OUT_MIN      = 45;
+const KEEPER_OUT_MAX      = 80;
+const KEEPER_SIDE_INSET   = 8;    // px kept inside each post
 const RESULT_MS         = 3500;
 const RESULT_DELAY_MS   = 800;
 // Once both sides have chosen, the duel holds on a VS card for a beat before
@@ -104,7 +109,14 @@ const STUN_MS           = 2500;  // how long the loser is frozen after a duel
 // over a full 6-minute match (2x HALF_S) so an average player is running on
 // empty by full time. Only kicks in once stamina drops under the threshold,
 // easing speed down to the floor multiplier rather than a hard cliff.
-const FATIGUE_DRAIN_PER_SEC = 150/(2*180);
+// Running costs far less than it did (it used to empty an average tank by
+// full time on its own); duels take their own toll instead (below).
+const FATIGUE_DRAIN_PER_SEC = 0.35*150/(2*180);
+// A duel's cost, as a share of each player's own maxStamina: losing one is
+// harder work than winning it, and a supertechnique costs a bit more on top.
+const DUEL_STAMINA_WIN  = 0.04;
+const DUEL_STAMINA_LOSE = 0.07;
+const DUEL_STAMINA_TECH = 0.02;
 const FATIGUE_THRESHOLD  = 0.4;  // fraction of maxStamina below which speed starts to drop
 const FATIGUE_MIN_MUL    = 0.55; // speed multiplier floor at 0 stamina
 const TEAM_SIZE         = 11;
@@ -113,6 +125,8 @@ const BENCH_COVER       = ['GK','DF','MF','FW','MF']; // positions the auto-pick
 const HALF_S            = 3 * 60;
 const HALFTIME_PAUSE_MS = 3000; // how long play freezes for the half-time break
 const GOAL_PAUSE_MS     = 2500; // how long play freezes to show the goal banner
+const OFFSIDE_PAUSE_MS  = 1500; // play freezes after an offside while the attackers drop back
+const OFFSIDE_PUSHBACK  = 40;   // px onside of the ball the offside side's players restart from
 const AI_SUB_CHECK_MS   = 8000; // how often the AI reconsiders its own lineup
 const AI_SUB_STAMINA    = 0.35; // fraction of maxStamina below which a player becomes a sub candidate
 const AI_MAX_SUBS       = 3;    // matches the real substitution limit
@@ -326,8 +340,12 @@ const RATING_WEIGHTS = {
 const AI_LEVELS = {
   easy:   { techChance:0.70, shootRange:420, shootChance:0.70, passChance:0.022, statMul:1.00, vision:0,   through:0.15, aimSkill:0.30, press:150, markRange:150, markBlend:0.35 },
   normal: { techChance:0.75, shootRange:445, shootChance:0.75, passChance:0.024, statMul:1.04, vision:0,   through:0.30, aimSkill:0.50, press:180, markRange:180, markBlend:0.45 },
-  hard:   { techChance:0.90, shootRange:530, shootChance:0.90, passChance:0.034, statMul:1.18, vision:100, through:0.80, aimSkill:0.85, press:230, markRange:220, markBlend:0.60 },
-  expert: { techChance:0.97, shootRange:620, shootChance:0.97, passChance:0.042, statMul:1.30, vision:160, through:1.00, aimSkill:1.00, press:260, markRange:240, markBlend:0.70 }
+  // Hard and Expert pick their shots (shotGate, see _aiShouldShoot) instead
+  // of firing the instant they're in range; tighter defending makes up for it.
+  hard:   { techChance:0.90, shootRange:470, shootChance:0.90, passChance:0.034, statMul:1.18, vision:100, through:0.80, aimSkill:0.85, press:245, markRange:220, markBlend:0.65,
+            shotGate:{ closeRange:250, maxReach:0.50, pressFrac:0.6 } },
+  expert: { techChance:0.97, shootRange:520, shootChance:0.97, passChance:0.042, statMul:1.30, vision:160, through:1.00, aimSkill:1.00, press:275, markRange:240, markBlend:0.75,
+            shotGate:{ closeRange:270, maxReach:0.55, pressFrac:0.6 } }
 };
 const AI_LEVEL_DEFAULT = 'normal';
 const AI_SPEED_BONUS_SHARE = 0.5; // movement gets half the stat inflation
@@ -2747,9 +2765,18 @@ export default class GameScene extends Phaser.Scene {
         yBias += slotRole==='FW'?-90:slotRole==='MF'?-50:-15;
       }
     }
-    // GK never leaves their line, but slides along it after the ball to
-    // cover the near post (which is what makes aiming a shot matter).
-    if(slot===0){ yBias=0; secondary=sSize/2+Phaser.Math.Clamp((ballPos.x-sSize/2)*KEEPER_TRACK,-KEEPER_TRACK_MAX,KEEPER_TRACK_MAX); }
+    // GK: between the ball and the middle of their own goal (see
+    // KEEPER_OUT_*), not the formation spot — except at a restart.
+    if(slot===0&&!clampOwnHalf){
+      const gx=sSize/2, gy=role==='A'?pSize:0;
+      const dx=ballPos.x-gx, dy=ballPos.y-gy, dist=Math.hypot(dx,dy)||1;
+      const out=Phaser.Math.Clamp(dist*KEEPER_OUT_FRAC,KEEPER_OUT_MIN,KEEPER_OUT_MAX);
+      const side=GOAL_HALF_WIDTH-KEEPER_SIDE_INSET;
+      const x=Phaser.Math.Clamp(gx+dx/dist*out,gx-side,gx+side);
+      // Never behind the line, even with the ball level with it.
+      const depth=Math.max(Math.abs(dy/dist*out),KEEPER_OUT_MIN*0.5);
+      return {x,y:role==='A'?gy-depth:gy+depth};
+    }
 
     primary = Phaser.Math.Clamp(primary+yBias*attackDir, margin, pSize-margin);
     // Kickoff/restart: everyone stays on their own side of the halfway line
@@ -3382,6 +3409,12 @@ export default class GameScene extends Phaser.Scene {
     for(const st of this.statsMapA.values()) st.stamina=Math.max(0,st.stamina-dec);
     for(const st of this.statsMapB.values()) st.stamina=Math.max(0,st.stamina-dec);
   }
+  /** What a duel takes out of a player (see DUEL_STAMINA_*). */
+  _duelStaminaCost(role,id,won,usedTech){
+    const st=this._statsFor(role,id); if(!st?.maxStamina) return;
+    const cost=st.maxStamina*((won?DUEL_STAMINA_WIN:DUEL_STAMINA_LOSE)+(usedTech?DUEL_STAMINA_TECH:0));
+    st.stamina=Math.max(0,st.stamina-cost);
+  }
   /** Speed multiplier from fatigue: full pace above the threshold, easing
    *  down to the floor as stamina empties out. */
   _fatigueMul(st){
@@ -3475,7 +3508,21 @@ export default class GameScene extends Phaser.Scene {
     const defendingRole=offsideRole==='A'?'B':'A';
     const spot={x:this.ball.position.x,y:this.ball.position.y};
     this._placeBallAndAward(defendingRole,spot,now);
+    // Everyone on the offside side who's ahead of the ball restarts from
+    // behind it (OFFSIDE_PUSHBACK onside of it), keeping their lane.
+    const ballDist=this._distToGoal(spot.y,offsideRole);
+    const team=offsideRole==='A'?this.teamA:this.teamB;
+    for(const e of team){
+      if(e.slot===0||!e.body||this._isOut(offsideRole,e.id)) continue;
+      if(this._distToGoal(e.body.position.y,offsideRole)>=ballDist+OFFSIDE_PUSHBACK) continue;
+      const y=offsideRole==='A'?spot.y+OFFSIDE_PUSHBACK:spot.y-OFFSIDE_PUSHBACK;
+      this.matter.body.setPosition(e.body,{x:e.body.position.x,y:Phaser.Math.Clamp(y,20,this.FIELD_H-20)});
+      this.matter.body.setVelocity(e.body,{x:0,y:0});
+    }
     this.confrontResult={title:'🚩 Offside!',outcome:'',until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS};
+    // A beat to see the flag and the line reset, like the other stoppages.
+    this._setPaused(true);
+    this.time.delayedCall(OFFSIDE_PAUSE_MS,()=>{ this._setPaused(false); this.confrontResult=null; });
   }
 
   /** Lifts the ball for the first PASS_LOFT_FRAC of a pass: while it's up
@@ -3865,16 +3912,36 @@ export default class GameScene extends Phaser.Scene {
    *  or, missing its aimSkill roll, anywhere in the goal. */
   _aiPickShotAim(){
     const e=this._activeEntry('B'); if(!e?.body) return null;
+    const lim=GOAL_HALF_WIDTH-GOAL_AIM_INSET, c=this.FIELD_W/2;
+    if(Math.random()>=(this._aiParams().aimSkill??1)) return this._clampAim('B',Phaser.Utils.Array.GetRandom([...Array(7).keys()].map(i=>c-lim+(2*lim)*i/6)));
+    return this._aiBestShot(e)?.target??null;
+  }
+  /** The best spot to aim at from `e`'s position and how much of it the
+   *  keeper can still reach (0 = none, 1 = right on it). */
+  _aiBestShot(e){
     const from=e.body.position, lim=GOAL_HALF_WIDTH-GOAL_AIM_INSET, c=this.FIELD_W/2;
-    const xs=[...Array(7).keys()].map(i=>c-lim+(2*lim)*i/6);
-    if(Math.random()>=(this._aiParams().aimSkill??1)) return this._clampAim('B',Phaser.Utils.Array.GetRandom(xs));
     let best=null, bestScore=-Infinity;
-    for(const x of xs){
-      const target=this._clampAim('B',x), path=this._shotPath('B',from,target);
-      const score=(1-(path.keeper?.reach??0))*100-(path.blocker?40:0)+(path.chainer?.canChain?25:0);
-      if(score>bestScore){ bestScore=score; best=target; }
+    for(let i=0;i<7;i++){
+      const target=this._clampAim('B',c-lim+(2*lim)*i/6), path=this._shotPath('B',from,target);
+      const reach=path.keeper?.reach??0;
+      const score=(1-reach)*100-(path.blocker?40:0)+(path.chainer?.canChain?25:0);
+      if(score>bestScore){ bestScore=score; best={target,reach}; }
     }
     return best;
+  }
+  /** Whether the AI carrier shoots this tick. In range, Easy and Normal
+   *  shoot on their per-tick chance; Hard and Expert (shotGate) only take
+   *  a shot worth taking — close in, a keeper who can't reach the best
+   *  spot, or a defender about to take the ball — and keep carrying
+   *  otherwise. */
+  _aiShouldShoot(e,p){
+    const dist=this.FIELD_H-e.body.position.y;
+    if(dist>p.shootRange) return false;
+    const g=p.shotGate;
+    if(g&&!(dist<g.closeRange
+      ||this._nearestOpponentDist('B',e)<PRESS_RANGE*g.pressFrac
+      ||(this._aiBestShot(e)?.reach??1)<=g.maxReach)) return false;
+    return Math.random()<p.shootChance;
   }
   /** Full power up close, easing down to a floor at long range. */
   _shotPowerMul(dist){
@@ -3983,8 +4050,8 @@ export default class GameScene extends Phaser.Scene {
       // ids ride along so _renderDuelReveal can show each side's portrait —
       // this object goes over the wire as-is (see sendState), so a real
       // opponent sees the same card either way.
-      a:{id:c.attackerId,name:as.name,move:aTN,winner:aWins,element:as.element,edge:elEdge>0},
-      d:{id:c.defenderId,name:ds.name,move:dTN,winner:!aWins,element:ds.element,edge:elEdge<0}
+      a:{id:c.attackerId,name:as.name,move:aTN,winner:aWins,element:as.element,edge:elEdge>0,color:this._css3(c.attackerRole==='A'?this.teamColorA:this.teamColorB)},
+      d:{id:c.defenderId,name:ds.name,move:dTN,winner:!aWins,element:ds.element,edge:elEdge<0,color:this._css3(c.defenderRole==='A'?this.teamColorA:this.teamColorB)}
     };
   }
 
@@ -4024,6 +4091,8 @@ export default class GameScene extends Phaser.Scene {
     if(c.type==='duel'){
       const eA=this._activeEntry(c.attackerRole), eD=this._activeEntry(c.defenderRole);
       this._stat(aWins?c.attackerRole:c.defenderRole,'duelsWon',1,aWins?c.attackerId:c.defenderId);
+      this._duelStaminaCost(c.attackerRole,c.attackerId,aWins,aTN!=='Normal');
+      this._duelStaminaCost(c.defenderRole,c.defenderId,!aWins,dTN!=='Normal');
       if(aWins){ this._knockback(eD,eA); this.stunMap.set(c.defenderId,now+STUN_MS); title=`${aName} dribbles past!`; }
       else { this.possRole=c.defenderRole; this._setActive(c.defenderRole,c.defenderId); this._knockback(eA,eD); this.stunMap.set(c.attackerId,now+STUN_MS); title=`${dName} wins the ball!`; }
       this.duelLockUntil=now+STUN_MS+200;
@@ -4496,6 +4565,9 @@ export default class GameScene extends Phaser.Scene {
     if(this.paused){
       this._applySquadRequests(myInput,inputB,aiActive);
       this._syncGfx(); this._renderClock(this.matchClock);
+      // A stoppage raised outside this loop (an offside, from the collision
+      // handler) still needs its banner drawn while play is frozen.
+      this._renderResultBanner(this.confrontResult,now);
       return;
     }
     this._applySquadRequests(myInput,inputB,aiActive);
@@ -4520,7 +4592,7 @@ export default class GameScene extends Phaser.Scene {
       else if(aiActive&&this.possRole==='B'){
         const eB=this._activeEntry('B'), p=this._aiParams();
         // Shoot as soon as it's in range rather than dithering around the box
-        if(eB&&eB.body.position.y>this.FIELD_H-p.shootRange&&Math.random()<p.shootChance) this._startConfront('shot','B','A',now,{target:this._aiPickShotAim()});
+        if(eB&&this._aiShouldShoot(eB,p)) this._startConfront('shot','B','A',now,{target:this._aiPickShotAim()});
         else if(eB&&this._aiMayPass(eB,now)){
           const underPressure=this._nearestOpponentDist('B',eB)<PRESS_RANGE;
           const passChance=underPressure?p.passChance:p.passChance*PASS_CHANCE_FREE_MULT;
@@ -4813,6 +4885,8 @@ export default class GameScene extends Phaser.Scene {
       const el=d.element?`<span class="duel-el${d.edge?' edge':''}">${ELEMENT_ICON[d.element]||''} ${d.element}${d.edge?' ▲':''}</span>`:'';
       const rp=d.id?getPlayerById(d.id):null;
       const av=this._avatarFill(rp,this._css3(rp?this._rosterColor(rp):0x999999));
+      // Whose side they're on, in the team's own colour.
+      card.querySelector('.duel-team').style.background=d.color||'transparent';
       card.querySelector('.duel-portrait').style.cssText=av.style;
       card.querySelector('.duel-portrait').textContent=av.inner;
       card.querySelector('.duel-who').innerHTML=`${d.name}${el}`;

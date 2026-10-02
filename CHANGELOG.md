@@ -4,6 +4,44 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Keeper positioning, team colours on duel cards, offside restart, stamina, and a choosier Hard AI
+- **The keeper stands between the ball and the goal.**
+  - Instead of sliding at most 42px along the line (a third of the ball's
+    sideways move), the keeper takes a spot on the line from the middle of
+    their goal to the ball.
+  - **Depth:** 45px off the line with the ball close, up to 80px when it's
+    far, about where they stood before.
+  - **Sideways:** the whole goal mouth. An attacker going wide now pulls
+    the keeper across to the near post instead of leaving them in the
+    middle (`KEEPER_OUT_*`, `_formPos`). Restarts still use the formation
+    spot.
+- **Duel cards show each side's team colour** as a band across the top
+  (`reveal.a/d.color`, so the client sees it too). The loser's card still
+  greys out, but its band keeps its colour.
+- **Offside:**
+  - Play freezes for 1.5s with the flag shown.
+  - Everyone on the offside side who was ahead of the ball restarts 40px
+    behind it, in their own lane (`OFFSIDE_PAUSE_MS`,
+    `OFFSIDE_PUSHBACK`).
+  - Banners raised while play is frozen are now drawn during the freeze.
+- **Stamina:**
+  - Running drains 0.35× what it did, so an average player now ends a
+    match with about two-thirds of the tank, not empty.
+  - Duels take their own toll: 4% of the winner's tank, 7% of the
+    loser's, plus 2% for whoever used a supertechnique
+    (`DUEL_STAMINA_*`).
+  - A busy midfielder ends tired, and a quiet one stays fresh.
+- **Hard and Expert pick their shots.**
+  - They used to shoot almost the moment they crossed their range (530 /
+    620px), with a 0.90 / 0.97 chance every frame.
+  - Now they only shoot when the shot is worth it (`shotGate`,
+    `_aiShouldShoot`): close in (250 / 270px), when their best aim
+    leaves the keeper half a chance or less, or when a defender is about
+    to take the ball. Otherwise they keep driving at goal or pass.
+  - To keep them hard, their range is shorter (470 / 520) and they defend
+    a notch tighter (press 245 / 275, marking 0.65 / 0.75). Easy and
+    Normal are unchanged.
+
 ## Level-99 stats
 Stats now show each character at **level 99** (the database's
 `baseStats99`) instead of level 50. Axel Blaze's Kick, for example, reads
