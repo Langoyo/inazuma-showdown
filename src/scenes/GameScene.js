@@ -117,6 +117,10 @@ const FATIGUE_DRAIN_PER_SEC = 0.35*150/(2*180);
 const DUEL_STAMINA_WIN  = 0.04;
 const DUEL_STAMINA_LOSE = 0.07;
 const DUEL_STAMINA_TECH = 0.02;
+// Both rates above are for HALF_S halves. A longer or shorter match scales
+// them by HALF_S/halfLengthS (see _staminaScale), so a player tires over the
+// match the same way whatever its length: twice the minutes, half the
+// drain a second and half a duel's cost (there are about twice the duels).
 const FATIGUE_THRESHOLD  = 0.4;  // fraction of maxStamina below which speed starts to drop
 const FATIGUE_MIN_MUL    = 0.55; // speed multiplier floor at 0 stamina
 const TEAM_SIZE         = 11;
@@ -132,6 +136,7 @@ const AI_SUB_STAMINA    = 0.35; // fraction of maxStamina below which a player b
 const AI_MAX_SUBS       = 3;    // matches the real substitution limit
 const STATE_HZ          = 20;
 const SCROLL_SPEED      = 340;   // px/s when a scroll button is held (was 220 — asked for faster)
+const WHEEL_LINE_PX     = 40;    // camera pan per wheel "line" when the browser counts lines, not pixels
 
 // Physics forces — the ball carrier is only slightly sharper than everyone
 // else now; off-ball players used to crawl (AUTO_STEER_FORCE/MAX_SPEED were
@@ -252,7 +257,9 @@ const KEEPER_CHASE_RANGE = 130;
 // much better stat still decides most of them.
 const ELEMENT_BEATS = { Fire:'Wood', Wood:'Air', Air:'Earth', Earth:'Fire' };
 const ELEMENT_EDGE  = 1.15; // power multiplier for the favourable side
-const ELEMENT_ICON  = { Fire:'🔥', Wood:'🌿', Air:'💨', Earth:'⛰️' };
+// Void is a technique element only (no player has it): it's shown, but it
+// beats nothing and nothing beats it.
+const ELEMENT_ICON  = { Fire:'🔥', Wood:'🌿', Air:'💨', Earth:'⛰️', Void:'◯' };
 // How each element's supertechnique bursts (see _playTechniqueFx): embers
 // rising for Fire, leaves drifting for Wood, fast streaks for Air, chunks
 // thrown up and falling for Earth. Plain Phaser emitter config.
@@ -598,6 +605,8 @@ export default class GameScene extends Phaser.Scene {
     this.input.on('pointermove',(p)=>{ if(p.isDown) this._pointerMove(p); });
     this.input.on('pointerup',(p)=>this._pointerUp(p));
     this.input.on('pointerupoutside',(p)=>this._pointerUp(p));
+    // The mouse wheel pans the pitch too, like the scroll keys (see _wheelScroll).
+    this.input.on('wheel',(p,_over,dx,dy)=>this._wheelScroll(p,dx,dy));
 
     document.getElementById('conf-normal').addEventListener('pointerdown',(e)=>{e.stopPropagation();this.pendingChoice='normal';});
     // Technique buttons are rebuilt per confrontation (a player can have more
@@ -973,6 +982,21 @@ export default class GameScene extends Phaser.Scene {
     const vy=Phaser.Math.Clamp(ky+this.joyVec.y,-1,1);
     cam.scrollX+=vx*spd; cam.scrollY+=vy*spd;
     this._clampScroll();
+  }
+
+  /** Mouse wheel / trackpad: vertical scroll moves the camera up and down
+   *  the pitch, horizontal (or Shift + wheel) sideways. Only wheel events on
+   *  the pitch itself get here — the HTML panels keep their own scrolling. */
+  _wheelScroll(pointer,dx,dy){
+    const ev=pointer?.event;
+    // Firefox can report whole lines rather than pixels.
+    const unit=ev?.deltaMode===1?WHEEL_LINE_PX:ev?.deltaMode===2?this.VP_H:1;
+    if(ev?.shiftKey&&!dx){ dx=dy; dy=0; }
+    const cam=this.cameras.main;
+    this.tweens.killTweensOf(cam); // don't fight a post-goal recentre
+    cam.scrollX+=dx*unit; cam.scrollY+=dy*unit;
+    this._clampScroll();
+    ev?.preventDefault?.();
   }
 
   /** Convert screen (pointer) coords to world coords accounting for camera. */
@@ -1747,9 +1771,10 @@ export default class GameScene extends Phaser.Scene {
     // All of a category's techniques, not just the one active in combat —
     // a player with two of the same kind can use either (see techniquesFor).
     // Tagged with the same icon as its stat above so it's clear at a
-    // glance whether a move is a shot, dribble, defense or keeper move.
+    // glance whether a move is a shot, dribble, defense or keeper move, and
+    // with its own element (which decides the elemental edge, not the player's).
     const techs=['shot','dribble','defense','keeper'].flatMap(cat=>techniquesFor(p,cat).map(t=>({...t,cat})))
-      .map(t=>`<div style="display:flex;justify-content:space-between;gap:8px"><span>${TECH_CAT_ICON[t.cat]} ${t.name}</span><span style="opacity:.7">${t.cost} PT</span></div>`).join('');
+      .map(t=>`<div style="display:flex;justify-content:space-between;gap:8px"><span>${TECH_CAT_ICON[t.cat]} ${t.name}</span><span style="opacity:.7;white-space:nowrap">${t.element?this._elBadge(t.element)+' · ':''}${t.cost} PT</span></div>`).join('');
     const st=p.stats;
     // Mid-match, whoever's actually on the pitch has live PT/stamina; show
     // current/total for them. Otherwise (pre-match, or still on the bench)
@@ -3405,14 +3430,17 @@ export default class GameScene extends Phaser.Scene {
    *  called once per tick regardless of half or possession. Fresh legs from
    *  a substitution are the only way to reset it (see _trySub/_buildTeam). */
   _tickFatigue(delta){
-    const dec=FATIGUE_DRAIN_PER_SEC*(delta/1000);
+    const dec=FATIGUE_DRAIN_PER_SEC*this._staminaScale()*(delta/1000);
     for(const st of this.statsMapA.values()) st.stamina=Math.max(0,st.stamina-dec);
     for(const st of this.statsMapB.values()) st.stamina=Math.max(0,st.stamina-dec);
   }
+  /** How much faster (>1) or slower (<1) stamina goes than in a HALF_S
+   *  match, so it lasts in proportion to the chosen half length. */
+  _staminaScale(){ return HALF_S/(this.halfLengthS>0?this.halfLengthS:HALF_S); }
   /** What a duel takes out of a player (see DUEL_STAMINA_*). */
   _duelStaminaCost(role,id,won,usedTech){
     const st=this._statsFor(role,id); if(!st?.maxStamina) return;
-    const cost=st.maxStamina*((won?DUEL_STAMINA_WIN:DUEL_STAMINA_LOSE)+(usedTech?DUEL_STAMINA_TECH:0));
+    const cost=st.maxStamina*((won?DUEL_STAMINA_WIN:DUEL_STAMINA_LOSE)+(usedTech?DUEL_STAMINA_TECH:0))*this._staminaScale();
     st.stamina=Math.max(0,st.stamina-cost);
   }
   /** Speed multiplier from fatigue: full pace above the threshold, easing
@@ -3881,6 +3909,7 @@ export default class GameScene extends Phaser.Scene {
       playKick();
       seq.power=this._kickPower(c.attackerRole,c.attackerId,tech);
       seq.names.push(tech?tech.name:'Normal');
+      seq.el=this._moveElement(st,tech);
       // The keeper still has to pick blind, so the technique isn't named
       // (or flashed) until the VS card.
       title=`${name} shoots!`; fxTech=null;
@@ -3888,11 +3917,12 @@ export default class GameScene extends Phaser.Scene {
     } else if(tech){
       seq.power+=this._kickPower(c.attackerRole,c.attackerId,tech);
       seq.names.push(tech.name);
+      seq.el=this._moveElement(st,tech); // the shot takes its latest technique's element
       seq.kickerId=c.attackerId;
       if(e){ const p=this._posOf(e); seq.from={x:p.x,y:p.y}; }
       title=`${name} chains it with ${tech.name}!`;
     } else title=`${name} lets it run`;
-    const fx=fxTech&&e?{a:{x:this._posOf(e).x,y:this._posOf(e).y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:fxTech.name,el:st?.element||null,power:fxTech.power},d:null}:null;
+    const fx=fxTech&&e?{a:{x:this._posOf(e).x,y:this._posOf(e).y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:fxTech.name,el:fxTech.element||null,power:fxTech.power},d:null}:null;
     this.confrontResult={title,outcome:'',until:now+1200,outcomeAt:now+RESULT_DELAY_MS,fx};
     this.confrontation=null;
     seq.idx++;
@@ -4019,9 +4049,13 @@ export default class GameScene extends Phaser.Scene {
     const dTech=this._tryTech(ds,def,c.defenderChoice);
     if(aTech) this._stat(c.attackerRole,'techs');
     if(dTech) this._stat(c.defenderRole,'techs');
-    // Elemental edge — only one side can hold it, and only when both players
-    // have a known element (the roster doesn't have one for everyone).
-    const elEdge=this._elementEdge(as.element,ds.element);
+    // Elemental edge — decided by the moves, not the players: a technique
+    // brings its own element (Axel's Inazuma Drop is Air whatever Axel is),
+    // a normal action the player's. A shot carries the element it was
+    // struck/chained with (see _resolveSoloStage). Only one side can hold
+    // the edge, and Void or an unknown element never does.
+    const aEl=seq?(seq.el??null):this._moveElement(as,aTech), dEl=this._moveElement(ds,dTech);
+    const elEdge=this._elementEdge(aEl,dEl);
     const aP=(seq
       ? seq.power
       : (aTech?aTech.power:NORMAL_ACTION_POWER)*Math.pow(as[STAT_FIELD_FOR_TECH[atk]],STAT_POWER_EXPONENT)*this._aiStatMul(c.attackerRole)
@@ -4041,8 +4075,8 @@ export default class GameScene extends Phaser.Scene {
     const shotFx=seq&&!seq.fxShown&&aTN!=='Normal'&&eAtk;
     if(shotFx) seq.fxShown=true;
     const fx={
-      a: (aTech||shotFx)&&eAtk ? {x:eAtk.body.position.x,y:eAtk.body.position.y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:aTN,el:as.element||null,power:aTech?aTech.power:(seq?.techMax||0)} : null,
-      d: dTech&&eDef ? {x:eDef.body.position.x,y:eDef.body.position.y,color:c.defenderRole==='A'?this.teamColorA:this.teamColorB,name:dTN,el:ds.element||null,power:dTech.power} : null
+      a: (aTech||shotFx)&&eAtk ? {x:eAtk.body.position.x,y:eAtk.body.position.y,color:c.attackerRole==='A'?this.teamColorA:this.teamColorB,name:aTN,el:aEl,power:aTech?aTech.power:(seq?.techMax||0)} : null,
+      d: dTech&&eDef ? {x:eDef.body.position.x,y:eDef.body.position.y,color:c.defenderRole==='A'?this.teamColorA:this.teamColorB,name:dTN,el:dEl,power:dTech.power} : null
     };
     c.pending={aWins,aTN,dTN,fx,aName:as.name,dName:ds.name};
     c.reveal={
@@ -4050,8 +4084,8 @@ export default class GameScene extends Phaser.Scene {
       // ids ride along so _renderDuelReveal can show each side's portrait —
       // this object goes over the wire as-is (see sendState), so a real
       // opponent sees the same card either way.
-      a:{id:c.attackerId,name:as.name,move:aTN,winner:aWins,element:as.element,edge:elEdge>0,color:this._css3(c.attackerRole==='A'?this.teamColorA:this.teamColorB)},
-      d:{id:c.defenderId,name:ds.name,move:dTN,winner:!aWins,element:ds.element,edge:elEdge<0,color:this._css3(c.defenderRole==='A'?this.teamColorA:this.teamColorB)}
+      a:{id:c.attackerId,name:as.name,move:aTN,winner:aWins,element:aEl,edge:elEdge>0,color:this._css3(c.attackerRole==='A'?this.teamColorA:this.teamColorB)},
+      d:{id:c.defenderId,name:ds.name,move:dTN,winner:!aWins,element:dEl,edge:elEdge<0,color:this._css3(c.defenderRole==='A'?this.teamColorA:this.teamColorB)}
     };
   }
 
@@ -4073,8 +4107,11 @@ export default class GameScene extends Phaser.Scene {
     if(!aiActive&&inputB.repositionRequest) this._tryReposition('B',inputB.repositionRequest);
   }
 
+  /** The element a move is played with: a technique's own (null when the
+   *  roster has none for it), a normal action the player's. */
+  _moveElement(st,tech){ return tech?(tech.element||null):(st?.element||null); }
   /** +1 when `a`'s element beats `b`'s, -1 when it's the other way round, 0
-   *  when neither has the edge (same element, or either one unknown). */
+   *  when neither has the edge (same element, Void, or either one unknown). */
   _elementEdge(a,b){
     if(!a||!b||a===b) return 0;
     if(ELEMENT_BEATS[a]===b) return 1;
@@ -4838,7 +4875,7 @@ export default class GameScene extends Phaser.Scene {
     return em;
   }
   /** A supertechnique going off: a ring in the team's colour, a burst in the
-   *  player's element (see ELEMENT_FX), and the technique's name floating
+   *  move's element (see ELEMENT_FX), and the technique's name floating
    *  up. The strongest moves also shake the camera. Shown on host and
    *  client alike, from the synced result. */
   _playTechniqueFx(data){
@@ -4944,16 +4981,21 @@ export default class GameScene extends Phaser.Scene {
     const myChoiceIsTech=myChoice&&typeof myChoice==='object'&&typeof myChoice.tech==='number';
     normalBtn.classList.toggle('is-primary',myChoice==='normal');
     // Show the elemental matchup before the choice, not just in the reveal —
-    // it's the one thing you can actually plan around (e.g. save the PT when
-    // you're at a disadvantage anyway).
+    // it's the one thing you can actually plan around. Each move brings its
+    // own element (see _moveElement), so this lists what the rival could
+    // answer with: their own element for a normal action plus each of their
+    // techniques'. Facing a shot there's nothing to list — its technique
+    // stays hidden until the VS card.
+    const solo=!!confrontation.solo;
     const oppRole=amA?confrontation.defenderRole:confrontation.attackerRole;
-    const oppId=amA?confrontation.defenderId:confrontation.attackerId;
+    const oppId=solo?(oppRole==='A'?this.gkIdA:this.gkIdB):(amA?confrontation.defenderId:confrontation.attackerId);
     const oppStats=this._statsFor(oppRole,oppId);
-    const edge=this._elementEdge(stats?.element,oppStats?.element);
-    const elLine=(stats?.element&&oppStats?.element)
-      ? ` · ${ELEMENT_ICON[stats.element]} ${stats.element} vs ${ELEMENT_ICON[oppStats.element]} ${oppStats.element}`
-        +(edge>0?' <span style="color:#7dff9b">▲ advantage</span>':edge<0?' <span style="color:#ff9b9b">▼ disadvantage</span>':'')
-      : (stats?.element?` · ${ELEMENT_ICON[stats.element]} ${stats.element}`:'');
+    const oppCat=isDuel?(amA?'defense':'dribble'):amA?(isBlock?'defense':'keeper'):null;
+    const oppEls=oppCat&&oppStats
+      ? [...new Set([oppStats.element,...techniquesFor(oppStats,oppCat).map(t=>t.element)].filter(Boolean))]
+      : [];
+    const myEl=stats?.element?` · normal ${this._elBadge(stats.element)}`:'';
+    const elLine=myEl+(oppEls.length?` · rival: ${oppEls.map(el=>this._elBadge(el,false)).join(' ')}`:'');
     document.getElementById('confrontation-player-info').innerHTML=stats?`<b>${rp?.name||stats.name}</b> — PT ${Math.round(stats.sp)}/${Math.round(stats.maxSP)}${elLine}`:'';
     // One button per technique this player has in the category — a player
     // with more than one of the same kind (see techniquesFor) can pick
@@ -4963,8 +5005,12 @@ export default class GameScene extends Phaser.Scene {
     techs.forEach((tech,idx)=>{
       const btn=document.createElement('button');
       btn.className='conf-btn nes-btn'; btn.dataset.idx=idx;
-      const elBadge=stats?.element?this._elBadge(stats.element):'';
-      btn.innerHTML=`${elBadge}${tech.name}<span class="cost">${tech.cost} PT</span>`;
+      // The technique's own element (its type), which needn't be the
+      // player's — and what it beats, so the matchup reads at a glance.
+      const beats=tech.element&&ELEMENT_BEATS[tech.element];
+      const elBadge=tech.element?`${this._elBadge(tech.element)}${beats?`<span class="el-beats">beats ${ELEMENT_ICON[beats]}</span>`:''} · `:'';
+      btn.innerHTML=`${tech.name}<span class="cost">${elBadge}${tech.cost} PT</span>`;
+      btn.dataset.element=tech.element||'';
       btn.disabled=!stats||stats.sp<tech.cost;
       if(myChoiceIsTech&&myChoice.tech===idx) btn.classList.add('is-primary');
       techWrap.appendChild(btn);

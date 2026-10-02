@@ -4,6 +4,40 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Technique elements, stamina scaled to match length, mouse-wheel camera
+- **Every technique has its own element** (its type in the new database):
+  - Fire, Wind → Air, Forest → Wood and Mountain → Earth, plus **Void**,
+    which is neutral: it beats nothing and nothing beats it.
+  - `scripts/import-characters.mjs` now writes `element` on every main
+    and extra technique (all but 8 of ~35k). Kept cards from the old roster
+    get it by technique name.
+- **The move's element decides the elemental edge, not the player's.**
+  - A technique brings its own: Axel's Inazuma-1 Drop is Air whatever
+    Axel is. A normal action uses the player's element, as before.
+  - A shot carries the element of its latest technique (strike or chain)
+    to the block and the keeper (`_moveElement`, `shotSeq.el`).
+  - The VS cards, the burst effects and the edge all use it.
+- **Shown on the cards:**
+  - Each technique button shows its element and what it beats
+    ("🔥 Fire beats 🌿 · 21 PT").
+  - The panel's info line lists your normal action's element and every
+    element the rival could answer with. Facing a shot it lists nothing,
+    since the shot's technique stays hidden until the VS card.
+  - The player stat sheet tags each technique with its element.
+- **Stamina is proportional to the match length.**
+  - The running drain and the duel costs were tuned for 3-minute halves.
+  - Both now scale by `HALF_S / halfLengthS` (`_staminaScale`). A
+    6-minute half drains half as much per second and per duel, and a
+    2-minute half 1.5×, so a player tires over a match the same way
+    whatever its length.
+- **The mouse wheel pans the pitch camera.**
+  - Vertical scroll moves it up and down the pitch; horizontal scroll or
+    Shift + wheel moves it sideways (`_wheelScroll`).
+  - It only applies over the pitch, so the panels keep their own
+    scrolling. It also stops a post-goal recentre that's in progress.
+- Tests: `tests/technique-elements.spec.js`; `technique-fx.spec.js` now
+  expects the technique's element.
+
 ## Keeper positioning, team colours on duel cards, offside restart, stamina, and a choosier Hard AI
 - **The keeper stands between the ball and the goal.**
   - Instead of sliding at most 42px along the line (a third of the ball's
