@@ -74,30 +74,45 @@ if (typeof window !== 'undefined') window.__iceServers = ICE_SERVERS;
  *  - sendState / onState: the host broadcasts the resulting match state
  *  - sendSquad / onSquad: each player sends their chosen starter + bench
  */
+// The BitTorrent trackers both browsers use to find each other. Left to
+// itself, Trystero 0.20.1 takes the first 3 of its 4 built-in ones, and one
+// of those (tracker.btorrent.xyz) refuses connections — so every player was
+// matchmaking through just two live trackers while the fourth went unused.
+// Listing them here makes Trystero use exactly these (all of them); swap one
+// out here if it ever goes down too.
+const TRACKER_URLS = [
+  'wss://tracker.webtorrent.dev',
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.files.fm:7073/announce',
+];
+
 export function connectToRoom(roomCode) {
-  const room = joinRoom({ appId: APP_ID, rtcConfig: { iceServers: ICE_SERVERS } }, roomCode);
+  const room = joinRoom({ appId: APP_ID, relayUrls: TRACKER_URLS, rtcConfig: { iceServers: ICE_SERVERS } }, roomCode);
 
   const [sendInput, onInput] = room.makeAction('input');
   const [sendState, onState] = room.makeAction('state');
   const [sendSquad, onSquad] = room.makeAction('squad');
 
   const selfId = room.selfId;
-  let peerId = null; // the opponent's id, filled in once they connect
+  // Everyone else in the room. Normally just the opponent — but an old tab
+  // left open on the same code is a third peer, and tracking only one id
+  // used to make two real players both decide they were the guest.
+  const peers = new Set();
 
-  // Host = whichever peer's id sorts first alphabetically between the two.
-  // This is deterministic: both browsers reach the same conclusion without
-  // needing to negotiate it explicitly. Note this is only "provisional"
-  // while peerId is still null — see onPeerConnect below for why callers
-  // can't just read it once at page load and assume it's final.
+  // Host = the lowest id among everyone in the room. Deterministic, so every
+  // browser reaches the same answer without negotiating it, and with two
+  // players it's the same rule as ever. Only "provisional" while nobody else
+  // has joined yet — see onPeerConnect below.
   function isHost() {
-    if (!peerId) return true; // alone in the room = provisional host
-    return selfId < peerId;
+    for (const id of peers) if (id < selfId) return false;
+    return true; // alone in the room = provisional host
   }
 
   let externalJoinHandler = null;
+  let externalLeaveHandler = null;
   room.onPeerJoin((id) => {
-    peerId = id;
-    console.log('[net] opponent connected:', id, 'am I host?', isHost());
+    peers.add(id);
+    console.log('[net] peer connected:', id, '— peers in room:', peers.size, '— am I host?', isHost());
     // The WebRTC handshake takes real time, so isHost() called right at
     // page load (before either browser knows the other exists) always
     // sees "alone in the room" and both sides provisionally become host —
@@ -108,21 +123,29 @@ export function connectToRoom(roomCode) {
   });
 
   room.onPeerLeave((id) => {
-    console.log('[net] opponent disconnected:', id);
-    peerId = null;
+    peers.delete(id);
+    console.log('[net] peer disconnected:', id, '— peers in room:', peers.size);
+    if (externalLeaveHandler) externalLeaveHandler(id);
   });
 
-  /** true if there's no human opponent connected right now (used to trigger the AI) */
+  /** true if a human opponent is connected right now (false triggers the AI) */
   function hasPeer() {
-    return peerId !== null;
+    return peers.size > 0;
+  }
+  /** How many other browsers are in the room — more than 1 means an extra tab. */
+  function peerCount() {
+    return peers.size;
   }
 
-  /** Fires once, right after a peer's id is known (see isHost's note above). */
+  /** Fires right after a peer's id is known (see isHost's note above). */
   function onPeerConnect(fn) {
     externalJoinHandler = fn;
   }
+  function onPeerDisconnect(fn) {
+    externalLeaveHandler = fn;
+  }
 
-  return { room, selfId, isHost, hasPeer, onPeerConnect, sendInput, onInput, sendState, onState, sendSquad, onSquad };
+  return { room, selfId, isHost, hasPeer, peerCount, onPeerConnect, onPeerDisconnect, sendInput, onInput, sendState, onState, sendSquad, onSquad };
 }
 
 /** Generates or reads a short room code from the URL (?room=XXXX). */

@@ -660,7 +660,15 @@ export default class GameScene extends Phaser.Scene {
       // both players had actually confirmed. Resending now that a peer
       // definitely exists costs nothing and fixes that silently-dropped case.
       if(this.mySquadConfirmed) this.net.sendSquad(this.mySquadPayload);
-      else if(this.uiMode==='multiplayer') document.getElementById('squad-status').textContent='';
+      this._renderNetStatus();
+    });
+    // Someone leaving before kick-off takes their squad (and any receipt of
+    // ours) with them.
+    this.net.onPeerDisconnect(()=>{
+      if(this.matchStarted) return;
+      if(!this.net.hasPeer()){ this.remoteSquadPayload=null; this._squadAcked=false; }
+      this._syncRoleFromNet();
+      this._renderNetStatus();
     });
     this.remoteState=null;
     this.remoteInput={targets:[],shootRequest:false,passTarget:null,confrontationChoice:null,subRequest:null,repositionRequest:null,formationChange:null,teamPanelRequest:null};
@@ -668,11 +676,17 @@ export default class GameScene extends Phaser.Scene {
     this.net.onState(d=>this._incomingState(d));
     this.net.onSquad(d=>this._onRemoteSquad(d));
   }
-  /** `{retracted:true}` is the opponent backing out of the squad editor after
-   *  confirming (see _backToModeSelect) — forget their squad so a match can't
-   *  start against someone who has left. */
+  /** Squad-channel messages: the opponent's squad (answered with an `ack`,
+   *  so they know it landed), an `ack` of ours, a `request` for ours (a
+   *  guest whose game started without it), or `{retracted:true}` — the
+   *  opponent backing out of the squad editor after confirming (see
+   *  _backToModeSelect), so a match can't start against someone who left. */
   _onRemoteSquad(d){
-    this.remoteSquadPayload=d?.retracted?null:d;
+    if(d?.ack){ this._squadAcked=true; this._renderNetStatus(); return; }
+    if(d?.request){ if(this.mySquadConfirmed) this.net.sendSquad(this.mySquadPayload); return; }
+    if(d?.retracted) this.remoteSquadPayload=null;
+    else if(d?.starterIds){ this.remoteSquadPayload=d; this.net.sendSquad({ack:true}); }
+    this._renderNetStatus();
     this._tryStartMultiplayerMatch();
   }
 
@@ -783,7 +797,7 @@ export default class GameScene extends Phaser.Scene {
     const noRivalTab=multi||this.uiMode==='tournament'||this.uiMode==='story';
     document.getElementById('squad-side-tabs').style.display=noRivalTab?'none':'flex';
     if(noRivalTab&&this.editSide==='rival') this._setEditSide('me');
-    document.getElementById('squad-status').textContent=(multi&&!this.net.hasPeer())?'Connecting to opponent…':'';
+    if(multi) this._renderNetStatus(); else document.getElementById('squad-status').textContent='';
     // No AI plays in multiplayer, so its difficulty has nothing to affect.
     document.getElementById('ai-difficulty-row').style.display=multi?'none':'flex';
     // Half length is host-authoritative once a match is running (the guest
@@ -2230,7 +2244,7 @@ export default class GameScene extends Phaser.Scene {
     const payload={starterIds,benchIds:[...this.benchIds],formation:this.chosenFormation,color:this.myTeamColor,name:this._myTeamName()};
     if(this.uiMode==='tournament'){ this._startTournamentWithSquad(payload); return; }
     if(this.uiMode==='story'){ this._startStoryWithSquad(payload); return; }
-    this.mySquadPayload=payload; this.mySquadConfirmed=true;
+    this.mySquadPayload=payload; this.mySquadConfirmed=true; this._squadAcked=false;
     this.net.sendSquad(payload);
     document.getElementById('confirm-squad-btn').disabled=true;
     if(this.uiMode==='solo'){ this._startMatch(payload,this._rivalSquadPayload()); return; }
@@ -2242,9 +2256,10 @@ export default class GameScene extends Phaser.Scene {
     // couple seconds until the match actually starts, instead of leaving
     // both players stuck on a single send that never landed.
     if(this._squadRetryTimer) clearInterval(this._squadRetryTimer);
+    // Once the opponent acknowledges it, there's nothing left to resend.
     this._squadRetryTimer=setInterval(()=>{
       if(this.matchStarted){ clearInterval(this._squadRetryTimer); this._squadRetryTimer=null; return; }
-      this.net.sendSquad(this.mySquadPayload);
+      if(!this._squadAcked) this.net.sendSquad(this.mySquadPayload);
       this._tryStartMultiplayerMatch();
     },2000);
   }
@@ -2261,13 +2276,28 @@ export default class GameScene extends Phaser.Scene {
    *  re-derives the right status (or starts the match outright) the moment
    *  role actually settles, not just on the next network message. */
   _tryStartMultiplayerMatch(){
+    this._renderNetStatus();
     if(this.uiMode!=='multiplayer'||this.matchStarted||!this.mySquadConfirmed) return;
-    if(this.role==='A'){
-      if(this.remoteSquadPayload) this._startMatch(this.mySquadPayload,this.remoteSquadPayload);
-      else document.getElementById('squad-status').textContent='Waiting for opponent…';
-    } else {
-      document.getElementById('squad-status').textContent='Waiting for match to start…';
+    if(this.role==='A'&&this.remoteSquadPayload) this._startMatch(this.mySquadPayload,this.remoteSquadPayload);
+  }
+  /** The squad editor's status line in multiplayer: exactly where the
+   *  start handshake stands on this side — connected or not, host or
+   *  guest, whose squad has arrived where — so a match that won't start
+   *  says which step is missing instead of just "waiting". */
+  _renderNetStatus(){
+    if(this.uiMode!=='multiplayer'||this.matchStarted) return;
+    const el=document.getElementById('squad-status');
+    const n=this.net.peerCount?.()??(this.net.hasPeer()?1:0);
+    let text;
+    if(n>1) text=`⚠ There are ${n} other players in room ${this.roomCode} — close extra tabs or use a new code.`;
+    else if(!n) text=`Not connected yet — share code ${this.roomCode}`;
+    else {
+      const mine=!this.mySquadConfirmed?'yours: not confirmed':this._squadAcked?'yours: ✓ received by opponent':'yours: ✓ confirmed, sending…';
+      text=this.role==='A'
+        ? `Connected · you're the host · opponent's squad: ${this.remoteSquadPayload?'✓ received':'waiting'} · ${mine}`
+        : `Connected · you're the guest · ${this.remoteSquadPayload?'host has confirmed, starting…':'waiting for the host to confirm'} · ${mine}`;
     }
+    el.textContent=text;
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -4642,6 +4672,13 @@ export default class GameScene extends Phaser.Scene {
       this.matchStarted=true;
       document.getElementById('squad-editor-panel').style.display='none';
       if(this._squadRetryTimer){ clearInterval(this._squadRetryTimer); this._squadRetryTimer=null; }
+    }
+    // The host started, but its squad never reached us (a message dropped
+    // while the channel was opening): ask for it — the teams can't be
+    // built without it (_buildClientTeams).
+    if(data.matchStarted&&!this.remoteSquadPayload){
+      const now=performance.now();
+      if(!(now-(this._lastSquadRequest||0)<1000)){ this._lastSquadRequest=now; this.net.sendSquad({request:true}); }
     }
     // Mirrors the host's authoritative team-panel state: whichever side
     // opened it (this one or the host's own), both screens show it —

@@ -4,6 +4,48 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Multiplayer: a status line that says what's missing, squad receipts, extra-tab detection, live trackers only
+Testing peer-to-peer on the same Wi‑Fi, one screen sat on "Waiting for
+match to start…". The two browsers had connected (that text only shows
+once you know you're the guest), but the host never started, and
+nothing said why.
+
+**What the console showed.**
+- The `701 STUN binding request timed out` lines are routine: one STUN
+  address not answering on one network interface. They're now debug
+  output.
+- `wss://tracker.btorrent.xyz` refusing connections is real. It's one of
+  the three trackers Trystero picks by default.
+
+**The squad editor's status line now shows the whole handshake, on both
+screens** (`_renderNetStatus`):
+- "Not connected yet — share code ABCDE".
+- "Connected · you're the host · opponent's squad: waiting / ✓ received
+  · yours: not confirmed / ✓ confirmed, sending… / ✓ received by
+  opponent".
+- "Connected · you're the guest · waiting for the host to confirm / host
+  has confirmed, starting… · yours: …".
+- "⚠ There are 2 other players in room ABCDE — close extra tabs or use a
+  new code".
+
+**Changes behind it:**
+- **More than one peer.** `network.js` tracks every peer in the room
+  (`peerCount()`), not just the last one to join. Host is the lowest id
+  of everyone, so an old tab on the same code can no longer make both
+  real players think they're the guest. It now triggers the warning
+  instead.
+- **Squad receipts.** A squad is answered with `{ack:true}`. Once yours
+  is acknowledged, the 2-second resend loop stops sending it.
+- **Late squad.** A guest whose match started without the host's squad
+  asks for it (`{request:true}`, at most once a second) instead of
+  waiting on a pitch it can't build.
+- **Trackers.** Our own list (`TRACKER_URLS`): webtorrent.dev,
+  openwebtorrent.com and files.fm, which Trystero never used. The dead
+  btorrent.xyz is dropped.
+- **Route log.** Once connected, the console logs which route won:
+  `[net] connected via host → host` (same network), `srflx` (through the
+  NAT) or `relay` (TURN).
+
 ## Level-99 stats
 Stats now show each character at **level 99** (the database's
 `baseStats99`) instead of level 50. Axel Blaze's Kick, for example, reads

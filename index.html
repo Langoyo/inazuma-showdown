@@ -1009,12 +1009,30 @@
         }
         var pc = new Native(config);
         console.log('[net] RTCPeerConnection created —', (config.iceServers ? config.iceServers.length : 0), 'ice server entries');
+        // A single STUN/TURN address not answering (701 "binding request
+        // timed out") is routine and doesn't stop the connection — kept as
+        // debug output so it doesn't read as the failure in the console.
         pc.addEventListener('icecandidateerror', function(e){
-          console.warn('[net] ICE candidate error:', {url: e.url, address: e.address, port: e.port, errorCode: e.errorCode, errorText: e.errorText});
+          console.debug('[net] ICE candidate error:', {url: e.url, address: e.address, port: e.port, errorCode: e.errorCode, errorText: e.errorText});
         });
         pc.addEventListener('iceconnectionstatechange', function(){ console.log('[net] iceConnectionState ->', pc.iceConnectionState); });
         pc.addEventListener('icegatheringstatechange', function(){ console.log('[net] iceGatheringState ->', pc.iceGatheringState); });
-        pc.addEventListener('connectionstatechange', function(){ console.log('[net] connectionState ->', pc.connectionState); });
+        pc.addEventListener('connectionstatechange', function(){
+          console.log('[net] connectionState ->', pc.connectionState);
+          if (pc.connectionState !== 'connected' || !pc.getStats) return;
+          // Which route won: host (same network), srflx (through the NAT via
+          // STUN) or relay (through the TURN server).
+          pc.getStats().then(function(stats){
+            var pair = null, byId = {};
+            stats.forEach(function(r){ byId[r.id] = r; });
+            stats.forEach(function(r){
+              if (r.type === 'transport' && r.selectedCandidatePairId) pair = byId[r.selectedCandidatePairId];
+            });
+            if (!pair) stats.forEach(function(r){ if (r.type === 'candidate-pair' && (r.selected || r.nominated) && r.state === 'succeeded') pair = pair || r; });
+            var l = pair && byId[pair.localCandidateId], rm = pair && byId[pair.remoteCandidateId];
+            console.log('[net] connected via', l ? l.candidateType : '?', '→', rm ? rm.candidateType : '?', '(' + (l ? (l.protocol || '?') : '?') + ')');
+          }).catch(function(){});
+        });
         return pc;
       }
       DiagnosticRTCPeerConnection.__wrappedForDiagnostics = true;

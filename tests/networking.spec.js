@@ -26,7 +26,7 @@ test.describe('multiplayer squad-confirm race', () => {
     await page.waitForTimeout(200);
 
     expect(await page.evaluate(() => window.__scene.matchStarted)).toBe(false);
-    await expect(page.locator('#squad-status')).toHaveText('Waiting for opponent…');
+    await expect(page.locator('#squad-status')).toContainText('Not connected yet — share code');
   });
 
   test('once the real peer’s squad is known, the match starts with it — not a generated AI squad', async ({ page }) => {
@@ -80,15 +80,16 @@ test.describe('multiplayer squad-confirm race', () => {
     await page.click('#pitch-randomize-btn');
     await page.click('#confirm-squad-btn');
     expect(await page.evaluate(() => window.__scene.role)).toBe('A');
-    await expect(page.locator('#squad-status')).toHaveText('Waiting for opponent…');
+    await expect(page.locator('#squad-status')).toContainText('Not connected yet');
 
     await page.evaluate(() => {
       const s = window.__scene;
       s.net.isHost = () => false;
+      s.net.hasPeer = () => true; s.net.peerCount = () => 1;
       s._syncRoleFromNet();
     });
     expect(await page.evaluate(() => window.__scene.role)).toBe('B');
-    await expect(page.locator('#squad-status')).toHaveText('Waiting for match to start…');
+    await expect(page.locator('#squad-status')).toContainText("you're the guest · waiting for the host to confirm");
   });
 
   test('confirming keeps re-sending your squad every couple seconds until the match starts', async ({ page }) => {
@@ -179,3 +180,73 @@ test.describe('role assignment vs. a late-connecting peer', () => {
     expect(afterMatchStart).toBe('B'); // unchanged — role is frozen once kickoff has happened
   });
 });
+
+// The squad editor's status line says where the start handshake stands, and
+// squads are acknowledged, so a match that won't start explains itself and a
+// dropped message gets recovered. The real network can't run here, so the
+// scene's net object is stubbed: a connected peer, and every send recorded.
+test.describe('connection status line and squad receipts', () => {
+  async function multiWithPeer(page, { host = true, peers = 1 } = {}) {
+    await page.goto('/');
+    await page.waitForFunction(() => document.querySelectorAll('#squad-pick-list .pick-card').length > 0, { timeout: 15000 });
+    await page.click('#landing-play-btn');
+    await page.click('#mode-multi-btn');
+    await page.click('#mode-multi-start-btn');
+    await page.evaluate(({ host, peers }) => {
+      const s = window.__scene;
+      s.__sent = [];
+      s.net.sendSquad = (d) => { s.__sent.push(d); };
+      s.net.isHost = () => host;
+      s.net.hasPeer = () => peers > 0;
+      s.net.peerCount = () => peers;
+      s._syncRoleFromNet();
+    }, { host, peers });
+    await page.click('#pitch-randomize-btn');
+  }
+  test('an extra tab in the room is called out instead of silently confusing who is host', async ({ page }) => {
+    await multiWithPeer(page, { peers: 2 });
+    await expect(page.locator('#squad-status')).toContainText('There are 2 other players in room');
+  });
+
+  test('host: shows what has arrived, acknowledges the guest\'s squad, and starts', async ({ page }) => {
+    await multiWithPeer(page, { host: true });
+    await expect(page.locator('#squad-status')).toContainText("you're the host · opponent's squad: waiting · yours: not confirmed");
+    await page.click('#confirm-squad-btn');
+    await expect(page.locator('#squad-status')).toContainText('yours: ✓ confirmed, sending…');
+    await page.evaluate(() => window.__scene._onRemoteSquad({ ack: true }));
+    await expect(page.locator('#squad-status')).toContainText('yours: ✓ received by opponent');
+    await page.evaluate(() => { const s = window.__scene; s._onRemoteSquad({ starterIds: s.squadSlots.filter(Boolean).slice().reverse(), benchIds: [], formation: s.chosenFormation }); });
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 5000 });
+    expect(await page.evaluate(() => window.__scene.__sent.some((d) => d?.ack))).toBe(true);
+  });
+
+  test('once the opponent has acknowledged your squad, the resend loop stops sending it', async ({ page }) => {
+    await multiWithPeer(page, { host: false });
+    await page.click('#confirm-squad-btn');
+    await page.evaluate(() => window.__scene._onRemoteSquad({ ack: true }));
+    const before = await page.evaluate(() => window.__scene.__sent.filter((d) => d?.starterIds).length);
+    await page.waitForTimeout(4500); // two retry ticks
+    const after = await page.evaluate(() => window.__scene.__sent.filter((d) => d?.starterIds).length);
+    expect(after).toBe(before);
+    await expect(page.locator('#squad-status')).toContainText("you're the guest · waiting for the host to confirm · yours: ✓ received by opponent");
+  });
+
+  test('a guest whose match started without the host\'s squad asks for it, and the answer builds the teams', async ({ page }) => {
+    await multiWithPeer(page, { host: false });
+    await page.click('#confirm-squad-btn');
+    // The host's first state arrives, but its squad was lost on the way.
+    await page.evaluate(() => window.__scene._incomingState({ matchStarted: true }));
+    expect(await page.evaluate(() => window.__scene.__sent.some((d) => d?.request))).toBe(true);
+    // A host asked for its squad sends it again.
+    const resent = await page.evaluate(() => {
+      const s = window.__scene; s.__sent = [];
+      s._onRemoteSquad({ request: true });
+      return s.__sent;
+    });
+    expect(resent[0].starterIds).toHaveLength(11);
+    // On the guest, that squad arriving is all the client teams were waiting for.
+    await page.evaluate(() => { const s = window.__scene; s._onRemoteSquad({ starterIds: s.squadSlots.filter(Boolean).slice().reverse(), benchIds: [], formation: s.chosenFormation }); s._buildClientTeams(); });
+    expect(await page.evaluate(() => window.__scene.clientTeamsBuilt)).toBe(true);
+  });
+});
+
