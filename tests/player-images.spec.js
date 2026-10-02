@@ -63,7 +63,7 @@ test.describe('portraits show up in the UI instead of colour+initials', () => {
       avatarRadius: getComputedStyle(el.querySelector('.pin-avatar')).borderRadius,
     }));
     expect(shapes.pinRadius).toBe('50%'); // the pin token itself is still a circle
-    expect(shapes.avatarBg).toMatch(/player_images|url\("https:/); // the face inside it is a picture
+    expect(shapes.avatarBg).toContain('player_images/'); // the face inside it is a picture
     expect(['0px', '']).toContain(shapes.avatarRadius); // square frame, not cropped to a circle
   });
 
@@ -86,10 +86,10 @@ test.describe('portraits show up in the UI instead of colour+initials', () => {
     await startMatch(page);
     await page.click('#sub-button');
     await page.waitForFunction(() => window.__scene.teamPanelOpen === true, { timeout: 2000 });
-    // Pixel portraits, or the official art for the few without one yet.
+    // Every card has a pixel portrait now.
     const bgs = await page.locator('#sub-list-inner .slot-pin[data-roster-id] .pin-avatar').evaluateAll((els) => els.map((el) => getComputedStyle(el).backgroundImage));
     expect(bgs.length).toBeGreaterThan(0);
-    for (const bg of bgs) expect(bg).toMatch(/player_images|url\("https:/);
+    for (const bg of bgs) expect(bg).toContain('player_images/');
   });
 
   test('a duel card shows both players\' portraits', async ({ page }) => {

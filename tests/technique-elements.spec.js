@@ -1,0 +1,150 @@
+import { test, expect } from '@playwright/test';
+import { waitForRosterLoaded, startMatch } from './helpers.js';
+
+// Every technique has its own element (Fire / Wind→Air / Forest→Wood /
+// Mountain→Earth / Void), from the roster import. That element — not the
+// player's — decides the elemental edge, and it's shown on the cards.
+
+test.describe('technique elements', () => {
+  test('the roster gives techniques their own element, which needn\'t be their user\'s', async ({ page }) => {
+    await page.goto('/');
+    const r = await page.evaluate(async () => {
+      const roster = await (await fetch('roster.json')).json();
+      let total = 0, withEl = 0, differs = 0;
+      const seen = new Set();
+      for (const p of roster) {
+        for (const t of [...Object.values(p.techniques || {}).filter(Boolean), ...(p.techniquesExtra || [])]) {
+          total++;
+          if (t.element) { withEl++; seen.add(t.element); if (p.element && t.element !== p.element && t.element !== 'Void') differs++; }
+        }
+      }
+      return { total, withEl, differs, seen: [...seen].sort() };
+    });
+    expect(r.withEl / r.total).toBeGreaterThan(0.95);
+    expect(r.seen).toEqual(['Air', 'Earth', 'Fire', 'Void', 'Wood']);
+    expect(r.differs).toBeGreaterThan(0);
+  });
+
+  test('the edge goes by the technique\'s element; a normal action uses the player\'s; Void is neutral', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      const a = s.teamA[5], d = s.teamB[5];
+      const stA = s._statsFor('A', a.id), stB = s._statsFor('B', d.id);
+      const duel = (techEl) => {
+        stA.element = 'Fire'; stB.element = 'Earth'; // Earth beats Fire between the players themselves
+        stA.techniques = { shot: null, dribble: { name: 'Test Dribble', cost: 1, power: 80, element: techEl }, defense: null, keeper: null };
+        stA.techniquesExtra = []; stA.sp = 999;
+        s.confrontation = { type: 'duel', attackerRole: 'A', defenderRole: 'B', attackerId: a.id, defenderId: d.id, attackerChoice: { tech: 0 }, defenderChoice: 'normal' };
+        s._prepareConfrontReveal(s.time.now);
+        const { a: ra, d: rd } = s.confrontation.reveal;
+        return { aEl: ra.element, aEdge: ra.edge, dEl: rd.element, dEdge: rd.edge, fx: s.confrontation.pending.fx.a.el };
+      };
+      const air = duel('Air'); // Air beats Earth: the technique turns it round
+      const voidT = duel('Void');
+      // A normal dribble: the players' own elements, so Earth has it.
+      stA.sp = 0;
+      s.confrontation = { type: 'duel', attackerRole: 'A', defenderRole: 'B', attackerId: a.id, defenderId: d.id, attackerChoice: 'normal', defenderChoice: 'normal' };
+      s._prepareConfrontReveal(s.time.now);
+      const normal = { aEl: s.confrontation.reveal.a.element, dEdge: s.confrontation.reveal.d.edge };
+      s.confrontation = null;
+      return { air, voidT, normal };
+    });
+    expect(r.air).toEqual({ aEl: 'Air', aEdge: true, dEl: 'Earth', dEdge: false, fx: 'Air' });
+    expect(r.voidT).toMatchObject({ aEl: 'Void', aEdge: false, dEdge: false });
+    expect(r.normal).toEqual({ aEl: 'Fire', dEdge: true });
+  });
+
+  test('a shot carries the element it was struck with to the keeper', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      const shooter = s.teamA[s.teamA.length - 1];
+      const stA = s._statsFor('A', shooter.id), stK = s._statsFor('B', s.gkIdB);
+      stA.element = 'Earth'; stK.element = 'Wood'; stK.sp = 0;
+      const tech = { name: 'Test Shot', cost: 1, power: 90, element: 'Fire' };
+      s.shotSeq = { power: 100, names: [tech.name], el: s._moveElement(stA, tech), stages: [], idx: 0 };
+      s.confrontation = { type: 'shot', attackerRole: 'A', defenderRole: 'B', attackerId: shooter.id, defenderId: s.gkIdB, attackerChoice: 'none', defenderChoice: 'normal', keeperReach: 1 };
+      s._prepareConfrontReveal(s.time.now);
+      const out = { a: s.confrontation.reveal.a.element, edge: s.confrontation.reveal.a.edge };
+      s.confrontation = null; s.shotSeq = null;
+      return out;
+    });
+    expect(r).toEqual({ a: 'Fire', edge: true }); // Fire beats Wood, though the shooter is Earth
+  });
+
+  test('the technique buttons, the matchup line and the stat sheet show each technique\'s element', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      const a = s.teamA[5], d = s.teamB[5];
+      const stA = s._statsFor(s.role, a.id), stB = s._statsFor('B', d.id);
+      stA.element = 'Fire';
+      stA.techniques = { shot: null, dribble: { name: 'Gale Dribble', cost: 1, power: 80, element: 'Air' }, defense: null, keeper: null };
+      stA.techniquesExtra = [{ name: 'Nothing Dribble', category: 'dribble', cost: 1, power: 70, element: 'Void' }];
+      stA.sp = 99;
+      stB.element = 'Earth';
+      stB.techniques = { shot: null, dribble: null, defense: { name: 'Leaf Wall', cost: 1, power: 80, element: 'Wood' }, keeper: null };
+      stB.techniquesExtra = [];
+      const c = { type: 'duel', attackerRole: 'A', defenderRole: 'B', attackerId: a.id, defenderId: d.id, deadline: s.time.now + 60000, attackerChoice: null, defenderChoice: null };
+      s._updateConfrontUI(c, s.time.now);
+      const btns = [...document.querySelectorAll('#conf-tech-list button')].map((b) => ({ el: b.dataset.element, text: b.textContent }));
+      const info = document.getElementById('confrontation-player-info').innerHTML;
+      s._updateConfrontUI(null, s.time.now);
+      return { btns, info };
+    });
+    expect(r.btns[0].el).toBe('Air');
+    expect(r.btns[0].text).toContain('Air');
+    expect(r.btns[0].text).not.toContain('beats');
+    expect(r.btns[1].el).toBe('Void');
+    // Both players' own elements, mine first.
+    expect(r.info).toMatch(/conf-matchup.*You.*el-Fire.*VS.*el-Earth/);
+
+    const p = await page.evaluate(() => window.__scene.rosterAll.find((pl) => Object.values(pl.techniques || {}).some((t) => t?.element && t.element !== pl.element)));
+    await page.evaluate((pl) => window.__scene._showPlayerStats(pl), p);
+    const tech = Object.values(p.techniques).find((t) => t?.element && t.element !== p.element);
+    await expect(page.locator('#player-stat-panel')).toContainText(tech.name);
+    await expect(page.locator(`#player-stat-panel .el-${tech.element}`).first()).toBeVisible();
+  });
+});
+
+test.describe('stamina and match length', () => {
+  test('running and duels drain in proportion to the half length', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      const id = s.teamA[5].id, st = s._statsFor('A', id);
+      const drain = (halfS) => {
+        s.halfLengthS = halfS;
+        st.stamina = st.maxStamina; s._tickFatigue(10000);
+        const run = st.maxStamina - st.stamina;
+        st.stamina = st.maxStamina; s._duelStaminaCost('A', id, false, true);
+        return { run, duel: st.maxStamina - st.stamina };
+      };
+      return { three: drain(180), six: drain(360), two: drain(120) };
+    });
+    expect(r.six.run).toBeCloseTo(r.three.run / 2, 5);
+    expect(r.six.duel).toBeCloseTo(r.three.duel / 2, 5);
+    expect(r.two.run).toBeCloseTo(r.three.run * 1.5, 5);
+    expect(r.two.duel).toBeCloseTo(r.three.duel * 1.5, 5);
+  });
+});
+
+test.describe('mouse wheel', () => {
+  test('scrolling over the pitch pans the camera', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const box = await page.locator('canvas').boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    const before = await page.evaluate(() => window.__scene.cameras.main.scrollY);
+    await page.mouse.wheel(0, 200);
+    await page.waitForFunction((b) => window.__scene.cameras.main.scrollY > b, before, { timeout: 3000 });
+    const down = await page.evaluate(() => window.__scene.cameras.main.scrollY);
+    await page.mouse.wheel(0, -400);
+    await page.waitForFunction((d) => window.__scene.cameras.main.scrollY < d, down, { timeout: 3000 });
+  });
+});
