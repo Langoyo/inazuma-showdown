@@ -4,6 +4,21 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Every card on a pixel portrait
+- The 152 cards that were still on official art (mostly managers, coaches
+  and characters new with the database import) now use the pixel portraits
+  added in #28.
+- `scripts/import-characters.mjs` prefers a local portrait for any card
+  with no image or a remote one. It looks for
+  `public/player_images/<id>_<slug>_pixel.png`, the names the download
+  script gives, plus `_pixel`. New portraits dropped in that folder are
+  picked up by re-running the import.
+- All 5,269 cards are on local portraits now, and none load from the
+  remote server. The avatar code still falls back to remote art and
+  initials for a card without one.
+- Tests: `roster-import.spec.js` checks every card's image exists
+  locally; `player-images.spec.js` expects only local portraits.
+
 ## Technique elements, stamina scaled to match length, mouse-wheel camera
 - **Every technique has its own element** (its type in the new database):
   - Fire, Wind → Air, Forest → Wood and Mountain → Earth, plus **Void**,

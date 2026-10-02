@@ -308,6 +308,29 @@ for (const [k, es] of groups) {
 }
 
 const out = entries.filter((e) => !drop.has(e)).map((e) => e.out);
+
+// ---- local portraits ---------------------------------------------------------------
+// A card the database only has official art for (an http URL) uses a pixel
+// portrait instead once one is in public/player_images, named
+// <id>_<slug>_pixel.png - the names download-portraits.mjs gives the
+// originals, plus "_pixel". Dropping new ones in and re-running the import
+// picks them up; cards already on a local portrait are left alone.
+const IMAGES_DIR = path.join(ROOT, 'public/player_images');
+const imageFiles = fs.existsSync(IMAGES_DIR) ? fs.readdirSync(IMAGES_DIR) : [];
+const imageSet = new Set(imageFiles);
+const slug = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+function localPortrait(p) {
+  const exact = `${p.id}_${slug(p.name)}_pixel.png`;
+  if (imageSet.has(exact)) return `/player_images/${exact}`;
+  const any = imageFiles.find((f) => f.startsWith(`${p.id}_`) && f.endsWith('_pixel.png'));
+  return any ? `/player_images/${any}` : null;
+}
+for (const p of out) {
+  if (p.image && !/^https?:\/\//.test(p.image)) continue;
+  const local = localPortrait(p);
+  if (local) p.image = local;
+}
 const ids = new Set();
 for (const p of out) { if (ids.has(p.id)) throw new Error(`duplicate id ${p.id}`); ids.add(p.id); }
 

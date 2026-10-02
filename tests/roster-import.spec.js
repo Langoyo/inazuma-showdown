@@ -4,8 +4,8 @@ import { waitForRosterLoaded } from './helpers.js';
 
 // Guards the roster built by scripts/import-characters.mjs from the full
 // character database: current ids kept, techniques on the game's scale,
-// coaches and managers in, official art only where there's no pixel
-// portrait, and old team names still reachable from saved state.
+// coaches and managers in, a local pixel portrait for every card, and old
+// team names still reachable from saved state.
 const roster = JSON.parse(fs.readFileSync(new URL('../public/roster.json', import.meta.url), 'utf8'));
 const renames = JSON.parse(fs.readFileSync(new URL('../src/data/team-renames.json', import.meta.url), 'utf8'));
 const byId = (id) => roster.find((p) => p.id === id || p.aliases?.includes(id));
@@ -40,10 +40,12 @@ test.describe('imported roster', () => {
     expect(roster.find((p) => p.name === 'Ray Dark' && p.game === 'IE1')).toMatchObject({ role: 'coach', team: 'Royal Academy' });
   });
 
-  test('characters new to the roster use the official art; nobody is left without a picture', () => {
+  test('characters new to the roster use their own pixel portraits; nobody is left on remote art or without a picture', () => {
     const silvia = roster.find((p) => p.name === 'Silvia Woods' && p.game === 'IE1');
-    expect(silvia.image).toMatch(/^https:\/\//);
-    expect(roster.filter((p) => !p.image)).toEqual([]);
+    expect(silvia.image).toBe('/player_images/silvia-woods-17_silvia_woods_pixel.png');
+    expect(roster.filter((p) => !p.image || /^https?:/.test(p.image)).map((p) => p.id)).toEqual([]);
+    const missing = roster.filter((p) => !fs.existsSync(new URL(`../public${p.image}`, import.meta.url))).map((p) => p.image);
+    expect(missing).toEqual([]);
   });
 
   test('ids are unique, and names come through unescaped', () => {
@@ -98,10 +100,8 @@ test.describe('imported roster', () => {
     await page.fill('#squad-search', 'Ray Dark');
     await page.dispatchEvent('#squad-search', 'input');
     await expect(page.locator('#squad-pick-list .pick-card .role-tag').first()).toHaveText('Coach');
-    // Ray Dark is new to the roster: official art, over an initials layer
-    // that shows if that server can't be reached.
+    // Ray Dark is new to the roster and has his own pixel portrait now.
     const bg = await page.locator('#squad-pick-list .pick-card .av').first().evaluate((el) => getComputedStyle(el).backgroundImage);
-    expect(bg).toContain('url("https://');
-    expect(bg).toContain('data:image/svg+xml');
+    expect(bg).toContain('player_images/');
   });
 });
