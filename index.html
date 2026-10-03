@@ -990,6 +990,73 @@
   <!-- Player stat panel (shown on tap in squad editor / sub panel) -->
   <div id="player-stat-panel"></div>
 
+  <!-- Confirmed by diagnostics (added here for exactly this): Trystero's
+       rtcConfig option (src/network/network.js) never actually reaches a
+       real connection. @thaunknown/simple-peer (the WebRTC library
+       Trystero uses underneath) only reads a NESTED opts.config.iceServers
+       for its RTCConfiguration — but Trystero's own peer.js passes
+       iceServers as a TOP-LEVEL option instead, which this simple-peer
+       version simply ignores. So every connection silently fell back to
+       simple-peer's own hardcoded default (Peer.config — Google + Twilio
+       STUN, no TURN), regardless of what we configured. A real, confirmed
+       version-mismatch bug between trystero and the simple-peer it
+       resolves to, not something fixable from network.js.
+       Patched here instead, at the one point guaranteed to be what the
+       browser actually uses: wrapping the native RTCPeerConnection
+       constructor and forcing our own iceServers (window.__iceServers,
+       set by network.js once its TURN fetch resolves) into every
+       connection's config. This has to be a plain classic script running
+       before the module graph below, not code inside network.js itself:
+       the WebRTC library that module chain pulls in (trystero ->
+       simple-peer -> webrtc-polyfill) captures window.RTCPeerConnection
+       into its own module-level const the moment IT first evaluates, so
+       wrapping window.RTCPeerConnection from inside that same import
+       chain is always too late — this runs first instead, before any of
+       those modules have even started loading, so the wrapped version is
+       what gets captured. Also keeps the earlier diagnostic logging
+       (icecandidateerror in particular — the specific STUN/TURN server a
+       candidate failed against, and why), safe to leave in either way. -->
+  <script>
+    (function(){
+      var Native = window.RTCPeerConnection;
+      if (!Native || Native.__wrappedForDiagnostics) return;
+      function DiagnosticRTCPeerConnection(config){
+        config = config || {};
+        if (window.__iceServers && window.__iceServers.length) {
+          config = Object.assign({}, config, { iceServers: window.__iceServers });
+        }
+        var pc = new Native(config);
+        console.log('[net] RTCPeerConnection created —', (config.iceServers ? config.iceServers.length : 0), 'ice server entries');
+        // A single STUN/TURN address not answering (701 "binding request
+        // timed out") is routine and doesn't stop the connection — kept as
+        // debug output so it doesn't read as the failure in the console.
+        pc.addEventListener('icecandidateerror', function(e){
+          console.debug('[net] ICE candidate error:', {url: e.url, address: e.address, port: e.port, errorCode: e.errorCode, errorText: e.errorText});
+        });
+        pc.addEventListener('iceconnectionstatechange', function(){ console.log('[net] iceConnectionState ->', pc.iceConnectionState); });
+        pc.addEventListener('icegatheringstatechange', function(){ console.log('[net] iceGatheringState ->', pc.iceGatheringState); });
+        pc.addEventListener('connectionstatechange', function(){
+          console.log('[net] connectionState ->', pc.connectionState);
+          if (pc.connectionState !== 'connected' || !pc.getStats) return;
+          // Which route won: host (same network), srflx (through the NAT via
+          // STUN) or relay (through the TURN server).
+          pc.getStats().then(function(stats){
+            var pair = null, byId = {};
+            stats.forEach(function(r){ byId[r.id] = r; });
+            stats.forEach(function(r){
+              if (r.type === 'transport' && r.selectedCandidatePairId) pair = byId[r.selectedCandidatePairId];
+            });
+            if (!pair) stats.forEach(function(r){ if (r.type === 'candidate-pair' && (r.selected || r.nominated) && r.state === 'succeeded') pair = pair || r; });
+            var l = pair && byId[pair.localCandidateId], rm = pair && byId[pair.remoteCandidateId];
+            console.log('[net] connected via', l ? l.candidateType : '?', '→', rm ? rm.candidateType : '?', '(' + (l ? (l.protocol || '?') : '?') + ')');
+          }).catch(function(){});
+        });
+        return pc;
+      }
+      DiagnosticRTCPeerConnection.__wrappedForDiagnostics = true;
+      window.RTCPeerConnection = DiagnosticRTCPeerConnection;
+    })();
+  </script>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

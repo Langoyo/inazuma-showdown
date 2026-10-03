@@ -44,7 +44,7 @@ test.describe('team panel forces a shared pause', () => {
 
     await page.evaluate(() => {
       const s = window.__scene;
-      s.net.hasPeer = () => true; // simulate a connected opponent
+      s.net.hasPeer = () => true; s.uiMode = 'multiplayer'; // simulate a connected opponent
       // As if the other player just clicked "Team" and it reached us —
       // real delivery goes through sendInput/onInput; this is the same
       // one-shot flag _applySquadRequests reads either way.

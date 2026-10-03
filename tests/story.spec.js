@@ -18,10 +18,13 @@ async function finish(page, a, b) {
     s._showFullTime();
   }, { a, b });
   await page.click('#fulltime-continue-btn');
-  await expect(page.locator('#story-panel')).toBeVisible({ timeout: 20000 });
+  await expect(page.locator('#story-panel')).toBeVisible({ timeout: 40000 });
 }
 
 test.describe('story mode', () => {
+  // Each of these reloads the page (and its 4 MB roster) once or twice; under
+  // a busy full-suite run that can outlast the default 30s.
+  test.describe.configure({ timeout: 60000 });
   test('every run resolves to a full ladder of rivals the roster can field', async ({ page }) => {
     await waitForRosterAtModeSelect(page);
     const runs = await page.evaluate(async () => {

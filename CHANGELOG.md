@@ -64,6 +64,136 @@ and how to run it, see [`README.md`](./README.md).
 - Tests: `match-report.spec.js`, a rematch with a slow roster, plus a
   second start and the menu mid-match.
 
+## Merge with main: the offside freeze reaches the guest
+- The keeper/offside/stamina/technique-element work from #27 and the new
+  portraits from #28 are merged into the multiplayer branch.
+- **Offside in multiplayer.** #27's offside freezes play for 1.5s, but the
+  host stopped sending state while play was frozen. The guest would have
+  seen neither the 🚩 banner nor the attackers dropping back until play
+  resumed, then everything at once.
+  - The state broadcast is now its own `_sendHostState`, also called from
+    the paused branch. The team-panel pause gets the same live state.
+- Test: `networking.spec.js`, "an offside freeze keeps sending state".
+
+## Multiplayer: a more responsive guest
+Two-device play worked, but the guest felt laggy. Everything goes through
+Trystero's reliable, ordered data channel, which holds new messages back
+while its buffer is full, so every extra message waited in line ahead of
+the next state.
+
+- **Less traffic.**
+  - The host no longer sends its input (the guest never used it).
+  - The guest sends input at most 30 times a second while its runs
+    change, at once for a tap, and otherwise a heartbeat every 250ms.
+    It used to send every frame, about 60 a second.
+  - The host's state goes out 30 times a second instead of 20, with
+    whole-pixel positions.
+  - Squads, benches and max PT/stamina are only included when they
+    change, plus a keyframe every 2s. The guest merges each state into
+    the last one.
+- **Taps arrive exactly once.** The host used to replace the guest's
+  input wholesale, so two messages between frames lost the first one's
+  shot, pass or choice, and a late one repeated it. Taps are now held
+  until a host frame uses them, then cleared (`_latchInput`,
+  `_clearRemoteOneShots`).
+- **State rate on slow frames.** Sending used real elapsed time with an
+  accumulator. The old "time since the last send" check halved the rate
+  on a host running below 60 fps.
+- **Your own runs move at once.**
+  - On the guest, a player following a drawn line moves toward its next
+    waypoint locally at its own pace, instead of after the round trip.
+    It's then pulled toward the host's position (a gentle 0.15 blend, or
+    0.5 when more than 60px apart), so a disagreement never lasts.
+  - Everything else follows the host's states a little more tightly
+    (0.4 instead of 0.3).
+- **Ping on the badge.** It now shows the round trip ("👥 Multiplayer ·
+  guest · 38 ms"), which tells a slow connection apart from a slow game.
+
+## Fix: both multiplayer players deciding they were the host (or both the guest)
+**The real cause of the two-device problems.**
+- `network.js` read its own id as `room.selfId`, but the room object
+  Trystero 0.20 returns has no `selfId`: it's a separate module export
+  (`import { selfId } from 'trystero/torrent'`, the same id Trystero
+  announces to the trackers). So our id was always `undefined`, and a
+  string compared with `undefined` is false both ways.
+- **Old rule** (`selfId < peerId`): both players became the guest. That
+  was the first test, stuck on "Waiting for match to start…" on both
+  screens.
+- **Rule flipped** ("host unless a peer's id is lower"): both became the
+  host, each simulating its own match. That was the second test, with
+  different positions, duels and shots.
+
+**Fix.**
+- Use Trystero's exported `selfId`.
+- The host rule lives in a pure `isLowestId(myId, peerIds)`, which throws
+  on a missing id instead of quietly answering false.
+- The `[net] peer connected` log shows both ids.
+
+## Fix: multiplayer screens showing two different matches
+Every page joins the room in its URL as soon as it loads, whatever mode
+the player then picks. So someone on a shared link who started **Solo**
+(or a tournament or a story) was still in the room, and their game
+leaked into it:
+- **Their squad went out on confirm.** A multiplayer host started a
+  match with it.
+- **Their solo match broadcast its state.** The other player drew it.
+- **Their own AI switched off** as soon as anyone else was in the room,
+  handing the rival team to "remote input" that never came.
+
+Now only Multiplayer plays over the network (`_online` / `_vsHuman`).
+Other modes don't send squads, state or inputs, ignore anything that
+arrives, always host their own match, and keep their AI opponent.
+
+**Two hosts.** If two hosts ever happen anyway, the host that receives
+the other's match state shows "⚠ Both players are hosting" instead of
+drawing a mix.
+
+**The mode badge now says which side you are** ("👥 Multiplayer ·
+host" / "· guest"), and the console logs who simulates the match when
+it starts.
+
+## Multiplayer: a status line that says what's missing, squad receipts, extra-tab detection, live trackers only
+Testing peer-to-peer on the same Wi‑Fi, one screen sat on "Waiting for
+match to start…". The two browsers had connected (that text only shows
+once you know you're the guest), but the host never started, and
+nothing said why.
+
+**What the console showed.**
+- The `701 STUN binding request timed out` lines are routine: one STUN
+  address not answering on one network interface. They're now debug
+  output.
+- `wss://tracker.btorrent.xyz` refusing connections is real. It's one of
+  the three trackers Trystero picks by default.
+
+**The squad editor's status line now shows the whole handshake, on both
+screens** (`_renderNetStatus`):
+- "Not connected yet — share code ABCDE".
+- "Connected · you're the host · opponent's squad: waiting / ✓ received
+  · yours: not confirmed / ✓ confirmed, sending… / ✓ received by
+  opponent".
+- "Connected · you're the guest · waiting for the host to confirm / host
+  has confirmed, starting… · yours: …".
+- "⚠ There are 2 other players in room ABCDE — close extra tabs or use a
+  new code".
+
+**Changes behind it:**
+- **More than one peer.** `network.js` tracks every peer in the room
+  (`peerCount()`), not just the last one to join. Host is the lowest id
+  of everyone, so an old tab on the same code can no longer make both
+  real players think they're the guest. It now triggers the warning
+  instead.
+- **Squad receipts.** A squad is answered with `{ack:true}`. Once yours
+  is acknowledged, the 2-second resend loop stops sending it.
+- **Late squad.** A guest whose match started without the host's squad
+  asks for it (`{request:true}`, at most once a second) instead of
+  waiting on a pitch it can't build.
+- **Trackers.** Our own list (`TRACKER_URLS`): webtorrent.dev,
+  openwebtorrent.com and files.fm, which Trystero never used. The dead
+  btorrent.xyz is dropped.
+- **Route log.** Once connected, the console logs which route won:
+  `[net] connected via host → host` (same network), `srflx` (through the
+  NAT) or `relay` (TURN).
+
 ## Every card on a pixel portrait
 - The 152 cards that were still on official art (mostly managers, coaches
   and characters new with the database import) now use the pixel portraits
@@ -585,6 +715,126 @@ A batch of independent gameplay/UX requests, landed together:
   descending two-note parry, distinct from the existing kick/pass/goal/
   whistle tones, triggered from the keeper-save branch of
   `_applyConfrontOutcome`.
+
+## Multiplayer signaling: back to public BitTorrent trackers, no backend
+Dropped the Firebase Realtime Database signaling (and the `firebase`
+dependency) to keep the game fully peer-to-peer with no backend of our own.
+`src/network/network.js` uses `trystero/torrent` again. The two connection
+fixes below stay: the TURN relay and the ICE-servers patch in `index.html`.
+The earlier "BitTorrent trackers don't work" verdict came before the ICE
+bug was found, and that bug made every connection fail after signaling
+whatever strategy was used. So this combination still needs a real
+two-device test.
+
+## Fix: TURN servers were fetched correctly but never actually reached the connection
+Adding a TURN server (previous entry) didn't fix real two-player testing —
+still `Uncaught Error: Connection failed`, even with valid TURN credentials
+confirmed reaching the app (visible in `[net] RTCPeerConnection created`
+diagnostic logs). Root cause, found by wrapping the native
+`RTCPeerConnection` constructor to log what it's actually being called
+with: a version mismatch between Trystero and the WebRTC library it uses
+underneath. Trystero's own `peer.js` passes `iceServers` as a *top-level*
+option to `@thaunknown/simple-peer`, but the resolved simple-peer version
+only reads a *nested* `opts.config.iceServers` — so it silently ignored
+both Trystero's defaults and our TURN config, and every connection fell
+back to simple-peer's own hardcoded STUN-only default (Google + Twilio),
+exactly matching what the diagnostic logs showed ("1 ice server entries",
+ICE candidate errors against those two hosts specifically). Not something
+fixable from `network.js`, since that option never reaches the real
+connection either way.
+
+Worked around by patching `config.iceServers` directly inside a plain
+classic `<script>` in `index.html`, wrapping the native
+`RTCPeerConnection` constructor — the one point guaranteed to be what the
+browser actually uses, bypassing the broken Trystero→simple-peer
+plumbing entirely. It reads `window.__iceServers`, a global
+`network.js` now sets right after its TURN fetch resolves. This has to be
+a classic script (not a `<script type="module">`), and has to run before
+`main.js`'s module graph: `webrtc-polyfill` (a dependency's dependency)
+captures the native `RTCPeerConnection` into its own module-scope
+constant the moment it's evaluated, which happens before any of
+`network.js`'s own top-level code runs — wrapping the constructor from
+inside `network.js` would already be too late.
+
+## Fix: WebRTC connections still failing after signaling was fixed — add a TURN server
+Firebase signaling (previous entry) fixed the "two browsers finding each
+other" half of the problem, but a real two-player test still hit
+`Connection failed` from WebRTC itself, one step later: Trystero's
+default ICE servers are STUN-only (a handful of Google/Twilio addresses),
+and STUN alone can't get a direct connection through every real-world NAT
+type (many home/mobile networks need an actual relay). Added a free TURN
+account (metered.ca) — `src/network/network.js` now fetches short-lived
+TURN credentials once, up front, and passes them into Trystero's
+`rtcConfig`. This has to happen *before* the app's first `joinRoom` call,
+not just kicked off in the background: Trystero pre-builds a pool of
+WebRTC offers using whatever ICE servers are current at that first call
+(see `trystero/strategy.js`'s `offerPool`), so mutating the config
+afterward wouldn't reach connections already in that pool. Implemented
+with a top-level `await` in `network.js` (bounded by a 4s timeout, falling
+back to a plain STUN default on any failure so a slow/unreachable TURN
+endpoint delays the app briefly rather than ever hanging it) — this
+needed bumping Vite's build target to `es2022` (`vite.config.js`), since
+the default predates top-level await support; es2022's browser floor
+(Chrome/Edge 94+, Firefox 93+, Safari 16.4+) is already implied by this
+game's existing WebRTC/Web Audio use.
+
+## Multiplayer signaling: our own Firebase Realtime Database, not a public relay
+Two public signaling backends were tried and both failed for real players
+— pinning a Nostr relay list (one entry down), then switching to
+BitTorrent trackers (next entry down), still no connection. Both are
+infrastructure we don't own, at the mercy of operators increasingly
+locking down against exactly the traffic pattern Trystero produces
+(anonymous, ephemeral, automated).
+
+Switched `src/network/network.js` to `trystero/firebase`, pointed at a
+Firebase Realtime Database project we actually own. This project's first
+small step into having *any* backend — but scoped deliberately narrow:
+the actual match (positions, input, 20 times a second) still runs direct
+peer-to-peer over WebRTC exactly as before, this only replaces the brief
+up-front handshake where two browsers find each other. That handshake is
+a handful of tiny writes per connection, not per frame, so it stays
+comfortably inside Firebase's free tier — and its own console Data tab
+gives an actual window into what's happening if a connectivity report
+ever needs debugging again, unlike an opaque public relay's WebSocket
+errors. `joinRoom`'s shape is identical across every Trystero strategy,
+so no caller needed to change.
+
+## Multiplayer signaling: switched from Nostr relays to BitTorrent trackers
+Pinning our own Nostr relay list (previous entry) fixed one real outage,
+but a second real two-player test immediately hit a wall of *different*
+relay failures — 502/503 errors, timeouts, and, tellingly, one relay
+(`offchain.pub`) explicitly rejecting the connection as "pubkey is not in
+our web of trust." That last one is the real signal: Nostr relay operators
+are increasingly locking down against exactly the traffic pattern Trystero
+produces — anonymous, ephemeral-keypair, high-frequency messages that look
+like bot/spam traffic to anything enforcing an identity policy. A
+different hand-picked relay list was never going to fix that, just
+relocate it.
+
+Switched `src/network/network.js` from `trystero` (the Nostr strategy) to
+`trystero/torrent` — BitTorrent trackers, purpose-built for anonymously
+connecting browser peers over WebRTC with no identity/trust layer to run
+afoul of, the same signaling backbone WebTorrent and its ecosystem already
+run in production on. Using Trystero's own default tracker list rather
+than pinning a custom one, same reasoning as before: they're the ones the
+library's own maintainer curates and tests against. Nothing else in
+`network.js` (or any caller) needed to change — `joinRoom`'s shape is the
+same across every Trystero strategy.
+
+## Fix: multiplayer couldn't connect at all — pin our own Nostr relays
+The actual root cause of "both players confirm and the game doesn't
+start": Trystero's Nostr signaling strategy picks 5 relays out of its own
+~25-entry default list, but that pick is a shuffle *seeded by our app ID*,
+not random per session — so every single player of this game was always
+handed the exact same 5 relays. A real two-player session's browser
+console showed why that's fatal: one of those relays' DNS didn't resolve,
+another's TLS certificate had expired, and a third explicitly rejected the
+connection ("not on white-list"). With none of the 5 working, the WebRTC
+handshake could never complete for anyone — no app-code fix could have
+touched this, since the peers never actually connected in the first place.
+Fixed by handing Trystero our own `relayUrls` (`src/network/network.js`)
+— eight well-known, currently reliable public relays — instead of relying
+on its derived subset.
 
 ## Fix: multiplayer could still get stuck after both players confirmed
 Two more gaps in the same squad-confirm flow the earlier multiplayer fix
