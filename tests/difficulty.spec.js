@@ -18,10 +18,10 @@ test.describe('AI difficulty stat inflation', () => {
     // to 1 immediately, since the stored roster stats are never touched.
     const withPeer = await page.evaluate(() => {
       const s = window.__scene;
-      const original = s.net.hasPeer;
-      s.net.hasPeer = () => true;
+      const original = s.net.hasPeer, mode = s.uiMode;
+      s.net.hasPeer = () => true; s.uiMode = 'multiplayer'; // a real opponent is only ever a Multiplayer one
       const b = s._aiStatMul('B');
-      s.net.hasPeer = original;
+      s.net.hasPeer = original; s.uiMode = mode;
       return b;
     });
     expect(withPeer).toBe(1);
