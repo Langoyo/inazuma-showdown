@@ -150,6 +150,8 @@ const PREDICT_SNAP_DIST = 60;   // further off than this, pull harder:
 const PREDICT_SNAP_BLEND= 0.5;
 const CLIENT_BLEND      = 0.4;  // everything else follows the host's states
 const SCROLL_SPEED      = 340;   // px/s when a scroll button is held (was 220 — asked for faster)
+const FIT_ZOOM_MIN      = 0.4;   // landscape fit-to-width zoom limits (see _fitZoom)
+const FIT_ZOOM_MAX      = 3;
 const WHEEL_LINE_PX     = 40;    // camera pan per wheel "line" when the browser counts lines, not pixels
 
 // Physics forces — the ball carrier is only slightly sharper than everyone
@@ -274,6 +276,10 @@ const ELEMENT_EDGE  = 1.15; // power multiplier for the favourable side
 // Void is a technique element only (no player has it): it's shown, but it
 // beats nothing and nothing beats it.
 const ELEMENT_ICON  = { Fire:'🔥', Wood:'🌿', Air:'💨', Earth:'⛰️', Void:'◯' };
+// The games' element wheel, clockwise from the top: each beats the next
+// (Fire → Wood → Air → Earth → Fire), the same cycle as ELEMENT_BEATS.
+const ELEMENT_WHEEL = ['Fire','Wood','Air','Earth'];
+const ELEMENT_WHEEL_COLOR = { Fire:'#ff7a45', Wood:'#5fcf5a', Air:'#6cc8ff', Earth:'#e0b84a' };
 // How each element's supertechnique bursts (see _playTechniqueFx): embers
 // rising for Fire, leaves drifting for Wood, fast streaks for Air, chunks
 // thrown up and falling for Earth. Plain Phaser emitter config.
@@ -546,6 +552,7 @@ export default class GameScene extends Phaser.Scene {
     // Camera setup: camera scrolls over the logical world
     this.cameras.main.setBounds(0,this.WORLD_Y_MIN,this.FIELD_W,this.WORLD_Y_MAX-this.WORLD_Y_MIN);
     this.cameras.main.setSize(this.VP_W,this.VP_H);
+    this.cameras.main.setZoom(this._fitZoom());
     this.cameras.main.scrollX=this.FIELD_W/2-this.VP_W/2;
     this.cameras.main.scrollY=this.FIELD_H/2-this.VP_H/2;
     this._clampScroll();
@@ -585,6 +592,8 @@ export default class GameScene extends Phaser.Scene {
     // (whichever real team most of the XI belongs to) for anyone who
     // never bothers with it, same as before this existed.
     this.myTeamColor=null;
+    // The same for the AI rival's kit, set from the Rival tab (solo only).
+    this.rivalTeamColor=null;
     // Rival-team state, only used solo vs AI — a real connected opponent
     // always picks their own squad regardless of what's set here.
     this.editSide='me';
@@ -652,7 +661,12 @@ export default class GameScene extends Phaser.Scene {
       data.forEach(p=>seen.set(p.name,(seen.get(p.name)||0)+1));
       this.duplicateNames=new Set([...seen].filter(([,n])=>n>1).map(([name])=>name));
       this._initSquadEditor();
-    }).catch(err=>{ document.getElementById('squad-pick-list').innerHTML=`<p style="color:#f88">Couldn't load roster.<br>${err.message}</p>`; });
+    }).catch(err=>{
+      document.getElementById('squad-pick-list').innerHTML=`<p style="color:#f88">Couldn't load roster.<br>${err.message}</p>`;
+      // Nothing can be resumed without it: give the landing page its Play button back.
+      document.getElementById('landing-resume-note')?.remove();
+      document.getElementById('landing-play-btn').style.display='';
+    });
 
     document.getElementById('confirm-squad-btn').addEventListener('click',()=>this._confirmSquad());
     this.matter.world.on('collisionstart',ev=>this._collisions(ev));
@@ -794,12 +808,37 @@ export default class GameScene extends Phaser.Scene {
       document.getElementById('tournament-panel').style.display='flex';
       this._renderTournamentPanel();
     });
+    this._showResumePending();
+  }
+  /** After a Rematch / back-to-tournament reload the roster takes a few
+   *  seconds to arrive (it's big; longer on a phone), and only then does
+   *  _consumeResume start the match. Until it does, the landing page says
+   *  what's coming instead of offering Play — tapping Play there used to
+   *  open the menus, which then sat on top of the rematch once it started. */
+  _showResumePending(){
+    let resume=null;
+    try{ resume=JSON.parse(sessionStorage.getItem(RESUME_KEY)||'null'); }catch{ return; }
+    if(!resume?.kind) return;
+    document.getElementById('landing-play-btn').style.display='none';
+    const note=document.createElement('p');
+    note.id='landing-resume-note';
+    note.textContent=resume.kind==='rematch'?'Starting the rematch…':resume.kind==='story'?'Back to the story…':'Back to the tournament…';
+    document.getElementById('landing-panel').appendChild(note);
+  }
+  /** Every menu screen, so whatever a reload resumes into (a rematch, the
+   *  bracket) isn't drawn underneath one that's still up. */
+  _hideMenus(){
+    for(const id of ['landing-panel','mode-select-panel','mode-multi-panel','squad-editor-panel','tournament-panel','story-panel'])
+      document.getElementById(id).style.display='none';
+    document.getElementById('landing-resume-note')?.remove();
+    document.getElementById('landing-play-btn').style.display='';
   }
 
   /** Shared landing point for "Play" and for backing out of the tournament
    *  setup screen — also keeps the Tournament button's label honest about
    *  whether it's starting fresh or resuming what's already running. */
   _showModeSelect(){
+    if(this.matchStarted){ this._hideMenus(); return; } // never a menu over a live match
     document.getElementById('landing-panel').style.display='none';
     document.getElementById('tournament-panel').style.display='none';
     document.getElementById('story-panel').style.display='none';
@@ -989,17 +1028,49 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _onResize(gameSize){
+    const cam=this.cameras.main;
+    // Keep looking at the same spot of the pitch through a rotation or a
+    // window resize (the camera's centre, not its corner, is what matters).
+    const cx=cam.scrollX+this.VP_W/2, cy=cam.scrollY+this.VP_H/2;
     this.VP_W=gameSize.width; this.VP_H=gameSize.height;
-    this.cameras.main.setSize(this.VP_W,this.VP_H);
+    cam.setSize(this.VP_W,this.VP_H);
+    cam.setZoom(this._fitZoom());
+    cam.scrollX=cx-this.VP_W/2; cam.scrollY=cy-this.VP_H/2;
     this._clampScroll();
+  }
+
+  /** Camera zoom for the current screen. On a touch device (phone, tablet)
+   *  turned to landscape the pitch is scaled to the width of the device, so
+   *  it shows the whole width and fills a wide screen instead of leaving
+   *  bars. Everywhere else — portrait, and any desktop window — it stays
+   *  1:1 and scrolls sideways when it's narrower than the pitch, as it
+   *  always has. */
+  _fitZoom(){
+    if(this.VP_W<=this.VP_H||!this._coarsePointer()) return 1;
+    return Phaser.Math.Clamp(this.VP_W/this.FIELD_W,FIT_ZOOM_MIN,FIT_ZOOM_MAX);
+  }
+  /** A touch screen is the main pointer (phones, tablets), not a mouse. */
+  _coarsePointer(){ return !!window.matchMedia?.('(pointer: coarse)').matches; }
+
+  /** Where the camera's scroll may go. Phaser's zoom is about the camera
+   *  centre, so at zoom z the view is VP/z world units and the scroll range
+   *  shifts by half the difference — the same maths as Phaser's own bounds
+   *  clamp, which at zoom 1 reduces to [0, FIELD_W-VP_W] x [Y_MIN, Y_MAX-VP_H]. */
+  _scrollLimits(){
+    const z=this.cameras.main.zoom||1, dw=this.VP_W/z, dh=this.VP_H/z;
+    const minX=(dw-this.VP_W)/2, minY=this.WORLD_Y_MIN+(dh-this.VP_H)/2;
+    return {
+      minX, maxX:Math.max(minX,minX+this.FIELD_W-dw),
+      minY, maxY:Math.max(minY,minY+(this.WORLD_Y_MAX-this.WORLD_Y_MIN)-dh)
+    };
   }
 
   /** Keeps the camera inside the world, which now reaches past both goal lines
    *  by GOAL_RUNOFF so the goals can be centred on screen. */
   _clampScroll(){
-    const cam=this.cameras.main;
-    cam.scrollX=Phaser.Math.Clamp(cam.scrollX,0,Math.max(0,this.FIELD_W-this.VP_W));
-    cam.scrollY=Phaser.Math.Clamp(cam.scrollY,this.WORLD_Y_MIN,Math.max(this.WORLD_Y_MIN,this.WORLD_Y_MAX-this.VP_H));
+    const cam=this.cameras.main, l=this._scrollLimits();
+    cam.scrollX=Phaser.Math.Clamp(cam.scrollX,l.minX,l.maxX);
+    cam.scrollY=Phaser.Math.Clamp(cam.scrollY,l.minY,l.maxY);
   }
 
   /** Smoothly pans the camera back to the centre of the pitch — used after a
@@ -1007,15 +1078,15 @@ export default class GameScene extends Phaser.Scene {
    *  it) could be anywhere near either goal line when it goes in, well off
    *  from the centre-spot restart everyone lines up for next. */
   _centerCameraOnField(durationMs=700){
-    const cam=this.cameras.main;
-    const targetX=Phaser.Math.Clamp(this.FIELD_W/2-this.VP_W/2,0,Math.max(0,this.FIELD_W-this.VP_W));
-    const targetY=Phaser.Math.Clamp(this.FIELD_H/2-this.VP_H/2,this.WORLD_Y_MIN,Math.max(this.WORLD_Y_MIN,this.WORLD_Y_MAX-this.VP_H));
+    const cam=this.cameras.main, l=this._scrollLimits();
+    const targetX=Phaser.Math.Clamp(this.FIELD_W/2-this.VP_W/2,l.minX,l.maxX);
+    const targetY=Phaser.Math.Clamp(this.FIELD_H/2-this.VP_H/2,l.minY,l.maxY);
     this.tweens.add({targets:cam,scrollX:targetX,scrollY:targetY,duration:durationMs,ease:'Cubic.Out'});
   }
 
   _tickScroll(delta){
     const cam=this.cameras.main;
-    const spd=SCROLL_SPEED*(delta/1000);
+    const spd=SCROLL_SPEED*(delta/1000)/(cam.zoom||1); // a screen speed: zoomed in, fewer world units
     const kx=(this.scrollKeys.left?-1:0)+(this.scrollKeys.right?1:0);
     const ky=(this.scrollKeys.up?-1:0)+(this.scrollKeys.down?1:0);
     const vx=Phaser.Math.Clamp(kx+this.joyVec.x,-1,1);
@@ -1034,15 +1105,18 @@ export default class GameScene extends Phaser.Scene {
     if(ev?.shiftKey&&!dx){ dx=dy; dy=0; }
     const cam=this.cameras.main;
     this.tweens.killTweensOf(cam); // don't fight a post-goal recentre
-    cam.scrollX+=dx*unit; cam.scrollY+=dy*unit;
+    const z=cam.zoom||1;
+    cam.scrollX+=dx*unit/z; cam.scrollY+=dy*unit/z;
     this._clampScroll();
     ev?.preventDefault?.();
   }
 
-  /** Convert screen (pointer) coords to world coords accounting for camera. */
+  /** Convert screen (pointer) coords to world coords accounting for camera:
+   *  the camera's centre stays put under zoom, so offsets from the screen
+   *  centre are divided by it. */
   _toWorld(x,y){
-    const cam=this.cameras.main;
-    return {x:x+cam.scrollX, y:y+cam.scrollY};
+    const cam=this.cameras.main, z=cam.zoom||1;
+    return {x:cam.scrollX+this.VP_W/2+(x-this.VP_W/2)/z, y:cam.scrollY+this.VP_H/2+(y-this.VP_H/2)/z};
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -1082,21 +1156,28 @@ export default class GameScene extends Phaser.Scene {
     const top=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
     return top?hexToInt(top[0]):fallback;
   }
-  /** Keeps the "Your team color" controls honest about which mode they're
-   *  in. A native colour input can't be blank, so while nothing has been
-   *  picked (`myTeamColor` null) the swatch previews what the automatic
-   *  pick currently works out to for your XI rather than showing some
-   *  fixed value that reads as a choice you made — change the squad and it
-   *  follows. Always your own XI, whichever side the pitch is showing,
-   *  since that's all this setting ever affects. */
+  /** Keeps the team color controls honest about which mode they're in. A
+   *  native colour input can't be blank, so while nothing has been picked
+   *  (the color is null) the swatch previews what the automatic pick
+   *  currently works out to for that XI rather than showing some fixed
+   *  value that reads as a choice you made — change the squad and it
+   *  follows. It follows the Me/Rival tab: on the Rival tab it sets the AI
+   *  rival's kit (`rivalTeamColor`), otherwise yours (`myTeamColor`). */
   _syncTeamColorUI(){
     const swatch=document.getElementById('my-team-color');
     const auto=document.getElementById('my-team-color-auto');
     if(!swatch||!auto) return;
-    auto.checked=this.myTeamColor==null;
-    if(this.myTeamColor==null) swatch.value=this._css3(this._squadColor(this.squadSlots.filter(Boolean),0x3399ff));
-    else swatch.value=this.myTeamColor;
+    const rival=this.editSide==='rival';
+    const label=document.getElementById('team-color-label');
+    if(label) label.textContent=rival?'Rival team color:':'Your team color:';
+    const picked=this._edColor();
+    auto.checked=picked==null;
+    if(picked==null) swatch.value=this._css3(this._squadColor(this._edSlots().filter(Boolean),rival?0xff4444:0x3399ff));
+    else swatch.value=picked;
   }
+  /** The picked kit color of whichever side the editor is showing (null = automatic). */
+  _edColor(){ return this.editSide==='rival'?this.rivalTeamColor:this.myTeamColor; }
+  _edSetColor(v){ if(this.editSide==='rival') this.rivalTeamColor=v; else this.myTeamColor=v; }
   /** A squad payload's kit color: whatever that player explicitly picked
    *  (payload.color, from the "Your team color" selector), or the usual
    *  auto-derived one if they never touched it — same fallback chain
@@ -1115,6 +1196,7 @@ export default class GameScene extends Phaser.Scene {
       this._edSetFormation(e.target.value); this._renderPitch();
     });
     document.getElementById('pitch-randomize-btn').addEventListener('click',()=>this._randomize());
+    document.getElementById('pitch-clear-btn').addEventListener('click',()=>this._clearTeamTap());
     document.getElementById('squad-whole-team-btn').addEventListener('click',()=>this._useWholeTeam());
     document.getElementById('squad-search').addEventListener('input',()=>this._renderPickListReset());
     this._combos=[
@@ -1145,12 +1227,12 @@ export default class GameScene extends Phaser.Scene {
     // Touching the swatch is what makes the colour an explicit override —
     // until then it's only previewing what Automatic works out to.
     document.getElementById('my-team-color').addEventListener('input',e=>{
-      this.myTeamColor=e.target.value; this._syncTeamColorUI();
+      this._edSetColor(e.target.value); this._syncTeamColorUI();
     });
     document.getElementById('my-team-color-auto').addEventListener('change',e=>{
       // Unticking keeps whatever is on screen, so the colour doesn't jump
       // the moment you take manual control of it.
-      this.myTeamColor=e.target.checked?null:document.getElementById('my-team-color').value;
+      this._edSetColor(e.target.checked?null:document.getElementById('my-team-color').value);
       this._syncTeamColorUI();
     });
     document.getElementById('half-length-select').addEventListener('change',e=>{
@@ -1554,6 +1636,7 @@ export default class GameScene extends Phaser.Scene {
     document.querySelectorAll('#squad-side-tabs .squad-side-tab').forEach(b=>b.classList.toggle('is-primary',b.dataset.side===side));
     this._squadSel=null;
     this._renderPitch(); this._renderPickList();
+    this._syncTeamColorUI();
   }
 
   /** Fills in any slot the rival XI is still missing at confirm time (e.g.
@@ -1571,7 +1654,7 @@ export default class GameScene extends Phaser.Scene {
       const takeAny=()=>{ for(const l of Object.values(byPos)) if(l.length) return l.pop().id; return null; };
       for(let i=0;i<slots.length;i++) if(!slots[i]) slots[i]=take(roles[i])||takeAny();
     }
-    return {starterIds:slots.filter(Boolean),benchIds:[...this.rivalBenchIds],formation:this.rivalFormation,name:this._rivalName||'Rival'};
+    return {starterIds:slots.filter(Boolean),benchIds:[...this.rivalBenchIds],formation:this.rivalFormation,color:this.rivalTeamColor,name:this._rivalName||'Rival'};
   }
   /** The name shown beside your goals on the scoreboard: the squad editor's
    *  team-name field, falling back to the profile's player name. */
@@ -1700,6 +1783,30 @@ export default class GameScene extends Phaser.Scene {
   _elBadge(el,withName=true){
     if(!el) return '';
     return `<span class="el-badge el-${el}">${ELEMENT_ICON[el]||''}${withName?' '+el:''}</span>`;
+  }
+  /** A small element wheel (SVG): the four elements round a circle with an
+   *  arrow from each to the one it beats. The two elements facing off are
+   *  ringed in their team's colour (the rest dimmed), and when one beats the
+   *  other that arrow glows. Void or an unknown element just isn't ringed. */
+  _elementWheel(elA,elB,colA,colB,size=64){
+    const C=50, R=33, pos=i=>{ const a=-Math.PI/2+i*Math.PI/2; return [C+R*Math.cos(a),C+R*Math.sin(a)]; };
+    const hot=ELEMENT_BEATS[elA]===elB?elA:ELEMENT_BEATS[elB]===elA?elB:null;
+    const uid=`ew${(this._wheelSeq=(this._wheelSeq||0)+1)}`;
+    const arrows=ELEMENT_WHEEL.map((el,i)=>{
+      // A quarter arc between neighbours, trimmed so it clears both nodes.
+      const a0=-Math.PI/2+i*Math.PI/2+0.42, a1=a0+Math.PI/2-0.84;
+      const [x0,y0]=[C+R*Math.cos(a0),C+R*Math.sin(a0)], [x1,y1]=[C+R*Math.cos(a1),C+R*Math.sin(a1)];
+      const on=el===hot;
+      return `<path class="ew-arrow${on?' hot':''}" d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${R} ${R} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}" fill="none" stroke="${on?'#ffd23f':'#fff'}" stroke-opacity="${on?1:hot?0.25:0.55}" stroke-width="${on?4:2.5}" marker-end="url(#${uid}${on?'h':'n'})"/>`;
+    }).join('');
+    const nodes=ELEMENT_WHEEL.map((el,i)=>{
+      const [x,y]=pos(i), inA=el===elA, inB=el===elB, dim=(elA||elB)&&!inA&&!inB;
+      const rings=(inA?`<circle cx="${x}" cy="${y}" r="15.5" fill="none" stroke="${colA||'#fff'}" stroke-width="3.5"/>`:'')
+        +(inB?`<circle cx="${x}" cy="${y}" r="${inA?19.5:15.5}" fill="none" stroke="${colB||'#fff'}" stroke-width="3.5"/>`:'');
+      return `<g class="ew-node" data-el="${el}" opacity="${dim?0.4:1}"><circle cx="${x}" cy="${y}" r="12" fill="${ELEMENT_WHEEL_COLOR[el]}" stroke="#000" stroke-width="2"/>${rings}<text x="${x}" y="${y+4.5}" font-size="12" text-anchor="middle">${ELEMENT_ICON[el]}</text></g>`;
+    }).join('');
+    const marker=(id,col)=>`<marker id="${id}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${col}"/></marker>`;
+    return `<svg class="el-wheel" width="${size}" height="${size}" viewBox="0 0 100 100" role="img" aria-label="Element wheel: Fire beats Wood beats Air beats Earth beats Fire"><defs>${marker(uid+'n','#fff')}${marker(uid+'h','#ffd23f')}</defs><circle cx="50" cy="50" r="48" fill="#1b1b2e" stroke="#000" stroke-width="3"/>${arrows}${nodes}</svg>`;
   }
   /** Overall rating chip for a pitch/bench pin — banded by strength so a
    *  squad's weak spots stand out without reading each number.
@@ -2276,6 +2383,27 @@ export default class GameScene extends Phaser.Scene {
    *  in an otherwise unpredictable squad. A star pool with nobody left for a
    *  role falls back to an ordinary pick, and _fillSquadByPosition-style
    *  backfill means a thin position never leaves a slot empty. */
+  /** 🗑 beside the dice: empties the XI and the bench of whichever side the
+   *  editor shows. Two taps — the first arms it ("Clear?") for a few
+   *  seconds — so a stray tap can't throw away a team you've built. */
+  _clearTeamTap(){
+    const btn=document.getElementById('pitch-clear-btn');
+    if(!this._clearArmed){
+      this._clearArmed=true; btn.textContent='Clear?'; btn.classList.add('armed');
+      this._clearDisarm=setTimeout(()=>this._disarmClear(),3000);
+      return;
+    }
+    this._disarmClear();
+    this._edSetSlots(Array(TEAM_SIZE).fill(null));
+    this._edSetBench(new Set());
+    this._squadSel=null; this._pickPosFilter=null;
+    this._renderPitch(); this._renderPickList();
+  }
+  _disarmClear(){
+    clearTimeout(this._clearDisarm); this._clearArmed=false;
+    const btn=document.getElementById('pitch-clear-btn');
+    btn.textContent='🗑'; btn.classList.remove('armed');
+  }
   _randomize(){
     // Shape first, then fill it position by position — the slot roles depend
     // on the formation, so picking it afterwards would mismatch them.
@@ -2753,6 +2881,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _startMatch(payloadA,payloadB){
+    // One match per page: a second start would build another 22 bodies on
+    // top of the running ones and both would play at once.
+    if(this.matchStarted){ console.warn('[match] already running; ignoring a second start'); return; }
     if(this._squadRetryTimer){ clearInterval(this._squadRetryTimer); this._squadRetryTimer=null; }
     this.formation.A=payloadA.formation||DEFAULT_FORMATION;
     this.formation.B=payloadB.formation||DEFAULT_FORMATION;
@@ -4415,6 +4546,12 @@ export default class GameScene extends Phaser.Scene {
     if(this.matchClock.overtime){ this.matchClock.otElapsed+=delta/1000; return; }
     this.matchClock.secondsRemaining-=delta/1000;
     if(this.matchClock.secondsRemaining<=0){
+      // Time's up mid-duel or mid-shot: the play finishes first (and its
+      // result shows), then the whistle. Nothing new starts meanwhile —
+      // see the stoppage check in _hostUpdate.
+      this.matchClock.secondsRemaining=0;
+      if(this._playStillOn()){ this.matchClock.stoppage=true; return; }
+      this.matchClock.stoppage=false;
       if(this.matchClock.half===1){
         this.matchClock.half=2; this.matchClock.secondsRemaining=this.halfLengthS;
         // Whoever didn't start the match gets the second half, as in a real
@@ -4434,6 +4571,13 @@ export default class GameScene extends Phaser.Scene {
       else if(this.score.a===this.score.b&&this._tournamentPendingFixture?.kind!=='league') this._startOvertime();
       else { this.matchClock.ended=true; this.matchClock.secondsRemaining=0; }
     }
+  }
+  /** A duel or a shot sequence still being decided — or, once the clock has
+   *  run out on one, its result banner not yet showing who won. */
+  _playStillOn(){
+    if(this.confrontation||this.shotSeq) return true;
+    const r=this.confrontResult;
+    return !!(this.matchClock.stoppage&&r&&this.time.now<r.outcomeAt);
   }
   /** Level at full time: golden-goal overtime, as long as it takes — the next
    *  goal wins. Not in a league fixture, where a draw is a result that
@@ -4592,19 +4736,22 @@ export default class GameScene extends Phaser.Scene {
     try{ resume=JSON.parse(sessionStorage.getItem(RESUME_KEY)||'null'); sessionStorage.removeItem(RESUME_KEY); }catch{ return; }
     if(!resume) return;
     if(resume.kind==='rematch'&&resume.a?.starterIds?.length&&resume.b?.starterIds?.length){
-      document.getElementById('landing-panel').style.display='none';
+      this._hideMenus();
       this.uiMode='solo'; this._applyUiMode();
       if(AI_LEVELS[resume.aiLevel]){ this.aiLevel=resume.aiLevel; document.getElementById('ai-level-select').value=resume.aiLevel; }
       if(resume.halfLengthS>0){ this.halfLengthS=resume.halfLengthS; this.matchClock.secondsRemaining=this.halfLengthS; this._renderClock(this.matchClock); }
       this._rivalName=resume.b.name;
       this._startMatch(resume.a,resume.b);
     } else if(resume.kind==='tournament'&&this.activeTournament){
-      document.getElementById('landing-panel').style.display='none';
+      this._hideMenus();
       document.getElementById('tournament-panel').style.display='flex';
       this._renderTournamentPanel();
     } else if(resume.kind==='story'&&this.activeStory){
-      document.getElementById('landing-panel').style.display='none';
+      this._hideMenus();
       this._openStoryPanel();
+    } else {
+      this._hideMenus(); // nothing to resume after all: the plain landing page
+      document.getElementById('landing-panel').style.display='flex';
     }
   }
 
@@ -4706,7 +4853,7 @@ export default class GameScene extends Phaser.Scene {
 
     if(this.confrontation){
       this._progressConfront(now,myInput,inputB,aiActive);
-    } else if(!this.matchClock.ended && !this._checkOutOfBounds(now)){
+    } else if(!this.matchClock.ended && !this.matchClock.stoppage && !this._checkOutOfBounds(now)){
       this._updateActive('A'); this._updateActive('B');
       this._moveTeam('A',myInput.targets,now); this._moveTeam('B',inputB.targets,now);
       if(myInput.passTarget&&this.possRole==='A') this._doPass('A',myInput.passTarget);
@@ -5081,6 +5228,10 @@ export default class GameScene extends Phaser.Scene {
     };
     const lit=!!rv.lit;
     side('a',rv.a,lit); side('d',rv.d,lit);
+    // Rebuilt only when the matchup changes: this runs every frame, and a
+    // fresh SVG each time would restart the glowing arrow's animation.
+    const vs=document.getElementById('duel-vs'), key=`${rv.a.element}|${rv.d.element}|${rv.a.color}|${rv.d.color}`;
+    if(vs.dataset.key!==key){ vs.dataset.key=key; vs.innerHTML=`<div>VS</div>${this._elementWheel(rv.a.element,rv.d.element,rv.a.color,rv.d.color,92)}`; }
   }
 
   _updateConfrontUI(confrontation,now){
@@ -5103,7 +5254,7 @@ export default class GameScene extends Phaser.Scene {
       document.getElementById('confrontation-title').textContent=waiting;
       document.getElementById('conf-normal').style.display='none';
       document.getElementById('conf-tech-list').innerHTML='';
-      document.getElementById('confrontation-player-info').innerHTML='';
+      const info=document.getElementById('confrontation-player-info'); info.innerHTML=''; info.dataset.key='';
       const rem=Math.max(0,confrontation.deadline-now);
       document.getElementById('confrontation-timer-fill').style.width=`${(rem/CONFRONT_MS)*100}%`;
       return;
@@ -5136,8 +5287,16 @@ export default class GameScene extends Phaser.Scene {
     const oppId=confrontation.solo?(oppRole==='A'?this.gkIdA:this.gkIdB):(amA?confrontation.defenderId:confrontation.attackerId);
     const oppStats=this._statsFor(oppRole,oppId);
     const side=(label,st)=>`<span class="conf-side"><span class="conf-who">${label}</span>${st?.element?this._elBadge(st.element):'<span class="el-badge">—</span>'}</span>`;
-    const matchup=`<div class="conf-matchup">${side('You',stats)}<span class="conf-vs">VS</span>${side(oppStats?.nickname||oppStats?.name||'Rival',oppStats)}</div>`;
-    document.getElementById('confrontation-player-info').innerHTML=stats?`<b>${rp?.name||stats.name}</b> — PT ${Math.round(stats.sp)}/${Math.round(stats.maxSP)}${matchup}`:'';
+    const myCol=this._css3(this.role==='A'?this.teamColorA:this.teamColorB), oppCol=this._css3(this.role==='A'?this.teamColorB:this.teamColorA);
+    const infoKey=stats?`${rp?.name||stats.name}|${Math.round(stats.sp)}|${Math.round(stats.maxSP)}|${stats.element}|${oppStats?.element}|${oppStats?.name}|${myCol}|${oppCol}`:'';
+    const info=document.getElementById('confrontation-player-info');
+    // Rewritten only when something in it changes (this runs every frame):
+    // the wheel's glowing arrow would otherwise restart its animation.
+    if(info.dataset.key!==infoKey){
+      info.dataset.key=infoKey;
+      const matchup=`<div class="conf-matchup">${side('You',stats)}${this._elementWheel(stats?.element,oppStats?.element,myCol,oppCol,68)}${side(oppStats?.nickname||oppStats?.name||'Rival',oppStats)}</div>`;
+      info.innerHTML=stats?`<b>${rp?.name||stats.name}</b> — PT ${Math.round(stats.sp)}/${Math.round(stats.maxSP)}${matchup}`:'';
+    }
     // One button per technique this player has in the category — a player
     // with more than one of the same kind (see techniquesFor) can pick
     // whichever they want, not just whichever happens to be "the" one.
