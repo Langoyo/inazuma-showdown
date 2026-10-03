@@ -638,7 +638,12 @@ export default class GameScene extends Phaser.Scene {
       data.forEach(p=>seen.set(p.name,(seen.get(p.name)||0)+1));
       this.duplicateNames=new Set([...seen].filter(([,n])=>n>1).map(([name])=>name));
       this._initSquadEditor();
-    }).catch(err=>{ document.getElementById('squad-pick-list').innerHTML=`<p style="color:#f88">Couldn't load roster.<br>${err.message}</p>`; });
+    }).catch(err=>{
+      document.getElementById('squad-pick-list').innerHTML=`<p style="color:#f88">Couldn't load roster.<br>${err.message}</p>`;
+      // Nothing can be resumed without it: give the landing page its Play button back.
+      document.getElementById('landing-resume-note')?.remove();
+      document.getElementById('landing-play-btn').style.display='';
+    });
 
     document.getElementById('confirm-squad-btn').addEventListener('click',()=>this._confirmSquad());
     this.matter.world.on('collisionstart',ev=>this._collisions(ev));
@@ -765,12 +770,37 @@ export default class GameScene extends Phaser.Scene {
       document.getElementById('tournament-panel').style.display='flex';
       this._renderTournamentPanel();
     });
+    this._showResumePending();
+  }
+  /** After a Rematch / back-to-tournament reload the roster takes a few
+   *  seconds to arrive (it's big; longer on a phone), and only then does
+   *  _consumeResume start the match. Until it does, the landing page says
+   *  what's coming instead of offering Play — tapping Play there used to
+   *  open the menus, which then sat on top of the rematch once it started. */
+  _showResumePending(){
+    let resume=null;
+    try{ resume=JSON.parse(sessionStorage.getItem(RESUME_KEY)||'null'); }catch{ return; }
+    if(!resume?.kind) return;
+    document.getElementById('landing-play-btn').style.display='none';
+    const note=document.createElement('p');
+    note.id='landing-resume-note';
+    note.textContent=resume.kind==='rematch'?'Starting the rematch…':resume.kind==='story'?'Back to the story…':'Back to the tournament…';
+    document.getElementById('landing-panel').appendChild(note);
+  }
+  /** Every menu screen, so whatever a reload resumes into (a rematch, the
+   *  bracket) isn't drawn underneath one that's still up. */
+  _hideMenus(){
+    for(const id of ['landing-panel','mode-select-panel','mode-multi-panel','squad-editor-panel','tournament-panel','story-panel'])
+      document.getElementById(id).style.display='none';
+    document.getElementById('landing-resume-note')?.remove();
+    document.getElementById('landing-play-btn').style.display='';
   }
 
   /** Shared landing point for "Play" and for backing out of the tournament
    *  setup screen — also keeps the Tournament button's label honest about
    *  whether it's starting fresh or resuming what's already running. */
   _showModeSelect(){
+    if(this.matchStarted){ this._hideMenus(); return; } // never a menu over a live match
     document.getElementById('landing-panel').style.display='none';
     document.getElementById('tournament-panel').style.display='none';
     document.getElementById('story-panel').style.display='none';
@@ -2697,6 +2727,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _startMatch(payloadA,payloadB){
+    // One match per page: a second start would build another 22 bodies on
+    // top of the running ones and both would play at once.
+    if(this.matchStarted){ console.warn('[match] already running; ignoring a second start'); return; }
     if(this._squadRetryTimer){ clearInterval(this._squadRetryTimer); this._squadRetryTimer=null; }
     this.formation.A=payloadA.formation||DEFAULT_FORMATION;
     this.formation.B=payloadB.formation||DEFAULT_FORMATION;
@@ -4535,19 +4568,22 @@ export default class GameScene extends Phaser.Scene {
     try{ resume=JSON.parse(sessionStorage.getItem(RESUME_KEY)||'null'); sessionStorage.removeItem(RESUME_KEY); }catch{ return; }
     if(!resume) return;
     if(resume.kind==='rematch'&&resume.a?.starterIds?.length&&resume.b?.starterIds?.length){
-      document.getElementById('landing-panel').style.display='none';
+      this._hideMenus();
       this.uiMode='solo'; this._applyUiMode();
       if(AI_LEVELS[resume.aiLevel]){ this.aiLevel=resume.aiLevel; document.getElementById('ai-level-select').value=resume.aiLevel; }
       if(resume.halfLengthS>0){ this.halfLengthS=resume.halfLengthS; this.matchClock.secondsRemaining=this.halfLengthS; this._renderClock(this.matchClock); }
       this._rivalName=resume.b.name;
       this._startMatch(resume.a,resume.b);
     } else if(resume.kind==='tournament'&&this.activeTournament){
-      document.getElementById('landing-panel').style.display='none';
+      this._hideMenus();
       document.getElementById('tournament-panel').style.display='flex';
       this._renderTournamentPanel();
     } else if(resume.kind==='story'&&this.activeStory){
-      document.getElementById('landing-panel').style.display='none';
+      this._hideMenus();
       this._openStoryPanel();
+    } else {
+      this._hideMenus(); // nothing to resume after all: the plain landing page
+      document.getElementById('landing-panel').style.display='flex';
     }
   }
 

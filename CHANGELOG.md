@@ -4,6 +4,27 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Fix: Rematch leaving a menu over the match, and two matches at once
+- **What happened:**
+  - Rematch reloads the page, then starts the match once the roster has
+    loaded. The roster is ~5 MB, so that takes a few seconds on a phone.
+  - Until then the normal landing page was up, Play button included.
+    Tapping it opened the mode menu, and when the rematch started it
+    hid only the landing page. The menu stayed on top of the running
+    match.
+  - Starting a match from that menu built a second set of 22 players on
+    top of the first, so both played at once.
+- **Fixes:**
+  - While a reload is resuming something, the landing page says so
+    ("Starting the rematch…", "Back to the tournament…") and has no
+    Play button (`_showResumePending`). Play comes back if the roster
+    fails to load.
+  - Resuming hides every menu, not just the landing page (`_hideMenus`).
+  - `_startMatch` refuses to start while a match is running, and the mode
+    menu can't open over a live match.
+- Tests: `match-report.spec.js`, a rematch with a slow roster, plus a
+  second start and the menu mid-match.
+
 ## Every card on a pixel portrait
 - The 152 cards that were still on official art (mostly managers, coaches
   and characters new with the database import) now use the pixel portraits

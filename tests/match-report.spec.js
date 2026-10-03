@@ -72,6 +72,40 @@ test.describe('match report', () => {
     expect(await page.evaluate(() => window.__scene.matchStarted)).toBe(false);
   });
 
+  test('while the rematch loads, the landing page says so instead of offering Play, and no menu is left over the match', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    await page.evaluate(() => window.__scene._showFullTime());
+    // A phone-slow roster after the reload: Play used to be tappable here,
+    // and the menus it opened then sat on top of the rematch.
+    await page.route('**/roster.json', async (route) => { await new Promise((r) => setTimeout(r, 2500)); await route.continue(); });
+    await page.click('#fulltime-rematch-btn');
+    await expect(page.locator('#landing-resume-note')).toHaveText('Starting the rematch…');
+    await expect(page.locator('#landing-play-btn')).toBeHidden();
+    await page.waitForFunction(() => window.__scene?.matchStarted === true, { timeout: 20000 });
+    const open = await page.evaluate(() => [...document.querySelectorAll('[id$="-panel"]')].filter((el) => getComputedStyle(el).display !== 'none').map((el) => el.id));
+    expect(open).toEqual([]);
+    await expect(page.locator('#landing-resume-note')).toHaveCount(0);
+  });
+
+  test('a second start never builds another match on top of a running one, and the menu stays shut mid-match', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      const bodies = s.matter.world.localWorld.bodies.length;
+      const ids = s.teamA.map((e) => e.id);
+      s._startMatch(s._lastMatchPayloads.b, s._lastMatchPayloads.a);
+      s._showModeSelect();
+      return {
+        same: JSON.stringify(s.teamA.map((e) => e.id)) === JSON.stringify(ids),
+        bodies: s.matter.world.localWorld.bodies.length - bodies,
+        menu: getComputedStyle(document.getElementById('mode-select-panel')).display,
+      };
+    });
+    expect(r).toEqual({ same: true, bodies: 0, menu: 'none' });
+  });
+
   test('multiplayer has no Rematch button', async ({ page }) => {
     await waitForRosterLoaded(page);
     await startMatch(page);
