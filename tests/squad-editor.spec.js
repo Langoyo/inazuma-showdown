@@ -89,6 +89,25 @@ test.describe('team color selector', () => {
     expect(info.teamColor).toBe('#00ff00');
   });
 
+  test('on the Rival tab the same control sets the AI rival\'s kit, and yours stays as it was', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await page.click('#pitch-randomize-btn');
+    await page.fill('#my-team-color', '#00ff00');
+    await page.dispatchEvent('#my-team-color', 'input');
+    await page.click('#squad-side-tabs [data-side="rival"]');
+    await expect(page.locator('#team-color-label')).toHaveText('Rival team color:');
+    await expect(page.locator('#my-team-color-auto')).toBeChecked(); // the rival starts on Automatic
+    await page.fill('#my-team-color', '#ff00ff');
+    await page.dispatchEvent('#my-team-color', 'input');
+    await page.click('#squad-side-tabs [data-side="me"]');
+    await expect(page.locator('#team-color-label')).toHaveText('Your team color:');
+    expect(await page.inputValue('#my-team-color')).toBe('#00ff00');
+    await page.click('#confirm-squad-btn');
+    await page.waitForFunction(() => window.__scene?.matchStarted === true, { timeout: 10000 });
+    const kits = await page.evaluate(() => { const s = window.__scene; return { a: s._css3(s.teamColorA), b: s._css3(s.teamColorB) }; });
+    expect(kits).toEqual({ a: '#00ff00', b: '#ff00ff' });
+  });
+
   test('starts on Automatic, previewing the color that pick actually gives', async ({ page }) => {
     // A native color input can't be blank, so the swatch has to show
     // something — it shows what Automatic works out to for the current XI

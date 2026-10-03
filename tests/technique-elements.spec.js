@@ -100,14 +100,39 @@ test.describe('technique elements', () => {
     expect(r.btns[0].text).toContain('Air');
     expect(r.btns[0].text).not.toContain('beats');
     expect(r.btns[1].el).toBe('Void');
-    // Both players' own elements, mine first.
-    expect(r.info).toMatch(/conf-matchup.*You.*el-Fire.*VS.*el-Earth/);
+    // Both players' own elements, mine first, with the element wheel between.
+    expect(r.info).toMatch(/conf-matchup.*You.*el-Fire.*el-wheel.*el-Earth/);
 
     const p = await page.evaluate(() => window.__scene.rosterAll.find((pl) => Object.values(pl.techniques || {}).some((t) => t?.element && t.element !== pl.element)));
     await page.evaluate((pl) => window.__scene._showPlayerStats(pl), p);
     const tech = Object.values(p.techniques).find((t) => t?.element && t.element !== p.element);
     await expect(page.locator('#player-stat-panel')).toContainText(tech.name);
     await expect(page.locator(`#player-stat-panel .el-${tech.element}`).first()).toBeVisible();
+  });
+});
+
+test.describe('element wheel', () => {
+  test('the VS card shows the wheel: both elements ringed in their team colours, the winning arrow lit', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const read = (a, d) => page.evaluate(([a, d]) => {
+      const s = window.__scene;
+      const rv = { type: 'duel', lit: false,
+        a: { id: s.teamA[5].id, name: 'A', move: 'Normal', winner: true, element: a, edge: false, color: '#ff0000' },
+        d: { id: s.teamB[5].id, name: 'D', move: 'Normal', winner: false, element: d, edge: false, color: '#0000ff' } };
+      s._renderDuelReveal(rv);
+      const svg = document.querySelector('#duel-vs .el-wheel');
+      const ringed = [...svg.querySelectorAll('.ew-node')].filter((g) => g.querySelectorAll('circle').length > 1).map((g) => g.dataset.el);
+      const strokes = [...svg.querySelectorAll('.ew-node circle')].map((c) => c.getAttribute('stroke'));
+      const hot = svg.querySelectorAll('.ew-arrow.hot').length;
+      s._renderDuelReveal(rv); // same matchup again: the same SVG stays (its animation keeps running)
+      return { nodes: svg.querySelectorAll('.ew-node').length, ringed, red: strokes.includes('#ff0000'), blue: strokes.includes('#0000ff'), hot, kept: document.querySelector('#duel-vs .el-wheel') === svg };
+    }, [a, d]);
+    expect(await read('Fire', 'Wood')).toEqual({ nodes: 4, ringed: ['Fire', 'Wood'], red: true, blue: true, hot: 1, kept: true });
+    // Fire and Air sit opposite each other on the wheel: neither beats the other.
+    expect(await read('Fire', 'Air')).toMatchObject({ ringed: ['Fire', 'Air'], hot: 0 });
+    // A Void move isn't on the wheel at all.
+    expect(await read('Void', 'Earth')).toMatchObject({ ringed: ['Earth'], hot: 0 });
   });
 });
 

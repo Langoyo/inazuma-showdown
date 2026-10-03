@@ -4,6 +4,28 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Rival team color, and an element wheel in duels
+- **The color picker follows the Me/Rival tab.**
+  - On the Rival tab it reads "Rival team color" and sets the AI rival's
+    kit (`rivalTeamColor`, Automatic by default). Your own color is left
+    alone.
+  - The rival's squad carries it into the match, rematches included. If
+    the two colors are too alike, the rival's is still shifted so the
+    sides can be told apart.
+- **Element wheel in duels**, like the games' chart: Fire → Wood → Air →
+  Earth (⛰️) → Fire round a circle, an arrow from each element to the one
+  it beats (`_elementWheel`, an inline SVG).
+  - On the VS card under "VS", and in the duel panel between your
+    element and the rival's.
+  - Both elements are ringed in their team's color and the rest dimmed.
+    When one beats the other, that arrow glows gold and flows (still
+    with reduced motion).
+  - A Void move isn't on the wheel.
+  - Both spots are re-rendered only when the matchup changes, so the
+    animation doesn't restart every frame.
+- Tests: `squad-editor.spec.js` (rival color), `technique-elements.spec.js`
+  (wheel).
+
 ## Fix: Rematch leaving a menu over the match, and two matches at once
 - **What happened:**
   - Rematch reloads the page, then starts the match once the roster has
