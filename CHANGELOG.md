@@ -4,6 +4,28 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Landscape on a phone or tablet: the pitch scales to the screen width
+- **Before:** the pitch always drew 1:1 at 960px wide. A screen wider than
+  that showed black bars either side, and a phone in landscape just
+  showed a 960px window of it.
+- **Now, on a touch device in landscape** (wider than tall), the camera
+  zooms so the pitch is exactly the width of the screen (`_fitZoom`,
+  width / 960, clamped 0.4–3). A wide screen is filled edge to edge, and
+  a phone shows the whole width of the pitch. The height scrolls as
+  before.
+  - **Desktop is unchanged:** a mouse-driven browser window, whatever its
+    shape, stays 1:1 (`(pointer: coarse)` decides what's a touch device).
+  - **Portrait is unchanged:** 1:1, scrolling sideways on a narrow phone.
+  - **Rotating** keeps looking at the same part of the pitch (the
+    camera's centre is preserved), and rotating back returns to 1:1.
+  - **Taps** land where the pitch is drawn: pointer → world maths
+    accounts for the zoom (`_toWorld`). The scroll limits do too
+    (`_scrollLimits`), which also fixes the post-goal recentre.
+  - Joystick, keys and the mouse wheel pan at the same speed on screen
+    at any zoom.
+- Tests: `technique-elements.spec.js`, "landscape fits the pitch to the
+  screen width".
+
 ## Time up mid-duel waits for the duel; a button to clear the team
 - **The whistle waits for the play.**
   - If the clock runs out during a duel or a shot, it holds at 0:00

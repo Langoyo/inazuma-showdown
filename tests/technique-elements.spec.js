@@ -173,3 +173,79 @@ test.describe('mouse wheel', () => {
     await page.waitForFunction((d) => window.__scene.cameras.main.scrollY < d, down, { timeout: 3000 });
   });
 });
+
+test.describe('landscape fits the pitch to the screen width', () => {
+  // Touch devices only: the default test browser has a mouse (pointer: fine),
+  // so a touch screen is faked by answering the media query.
+  const touch = (page) => page.addInitScript(() => {
+    const real = window.matchMedia.bind(window);
+    window.matchMedia = (q) => (/pointer:\s*coarse/.test(q) ? { matches: true, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} } : real(q));
+  });
+  async function started(page, w, h, { touchScreen = true } = {}) {
+    if (touchScreen) await touch(page);
+    await page.setViewportSize({ width: w, height: h });
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    await page.waitForTimeout(300);
+  }
+  const cam = (page) => page.evaluate(() => {
+    const s = window.__scene, c = s.cameras.main;
+    const wp = c.getWorldPoint(300, 120), mine = s._toWorld(300, 120);
+    return { zoom: c.zoom, vp: [s.VP_W, s.VP_H], viewW: c.worldView.width, viewX: c.worldView.x, scrollX: c.scrollX, scrollY: c.scrollY,
+      matches: Math.abs(wp.x - mine.x) < 1 && Math.abs(wp.y - mine.y) < 1 }; // Phaser rounds the camera to whole pixels
+  });
+
+  test('a wide landscape screen scales the 960px pitch to its width, with no sideways scrolling', async ({ page }) => {
+    await started(page, 1400, 600);
+    const r = await cam(page);
+    expect(r.zoom).toBeCloseTo(1400 / 960, 3);
+    expect(r.viewW).toBeCloseTo(960, 0); // the whole width of the pitch, edge to edge
+    expect(r.viewX).toBeCloseTo(0, 0);
+    expect(r.matches).toBe(true); // taps land where Phaser draws
+    // The wheel only moves it up and down: the width is already fully in view.
+    const x0 = r.scrollX;
+    const box = await page.locator('canvas').boundingBox();
+    await page.mouse.move(box.x + 500, box.y + 300);
+    await page.mouse.wheel(300, 0);
+    await page.waitForTimeout(200);
+    expect(await page.evaluate(() => window.__scene.cameras.main.scrollX)).toBeCloseTo(x0, 3);
+    const y0 = r.scrollY;
+    await page.mouse.wheel(0, 200);
+    await page.waitForFunction((y) => window.__scene.cameras.main.scrollY > y, y0, { timeout: 3000 });
+  });
+
+  test('a desktop window (mouse) stays 1:1 at any size, wide or not', async ({ page }) => {
+    await started(page, 1400, 600, { touchScreen: false });
+    const r = await cam(page);
+    expect(r.zoom).toBe(1);
+    expect(r.viewW).toBeCloseTo(1400, 0);
+    expect(r.matches).toBe(true);
+  });
+
+  test('a phone in landscape shows the whole width too; rotating back to portrait returns to 1:1', async ({ page }) => {
+    await started(page, 412, 915);
+    expect((await cam(page)).zoom).toBe(1);
+    await page.setViewportSize({ width: 915, height: 412 });
+    await page.waitForTimeout(500);
+    const land = await cam(page);
+    expect(land.zoom).toBeCloseTo(915 / 960, 3);
+    expect(land.viewW).toBeCloseTo(960, 0);
+    expect(land.matches).toBe(true);
+    await page.setViewportSize({ width: 412, height: 915 });
+    await page.waitForTimeout(500);
+    const port = await cam(page);
+    expect(port.zoom).toBe(1);
+    expect(port.matches).toBe(true);
+  });
+
+  test('the camera stays on the same part of the pitch through a rotation', async ({ page }) => {
+    await started(page, 412, 915);
+    const focus = () => page.evaluate(() => { const s = window.__scene, c = s.cameras.main; return { x: c.scrollX + s.VP_W / 2, y: c.scrollY + s.VP_H / 2 }; });
+    await page.evaluate(() => { const c = window.__scene.cameras.main; c.scrollY = 700; });
+    const before = await focus();
+    await page.setViewportSize({ width: 915, height: 412 });
+    await page.waitForTimeout(500);
+    const after = await focus();
+    expect(Math.abs(after.y - before.y)).toBeLessThan(2);
+  });
+});

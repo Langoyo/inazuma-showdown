@@ -150,6 +150,8 @@ const PREDICT_SNAP_DIST = 60;   // further off than this, pull harder:
 const PREDICT_SNAP_BLEND= 0.5;
 const CLIENT_BLEND      = 0.4;  // everything else follows the host's states
 const SCROLL_SPEED      = 340;   // px/s when a scroll button is held (was 220 — asked for faster)
+const FIT_ZOOM_MIN      = 0.4;   // landscape fit-to-width zoom limits (see _fitZoom)
+const FIT_ZOOM_MAX      = 3;
 const WHEEL_LINE_PX     = 40;    // camera pan per wheel "line" when the browser counts lines, not pixels
 
 // Physics forces — the ball carrier is only slightly sharper than everyone
@@ -550,6 +552,7 @@ export default class GameScene extends Phaser.Scene {
     // Camera setup: camera scrolls over the logical world
     this.cameras.main.setBounds(0,this.WORLD_Y_MIN,this.FIELD_W,this.WORLD_Y_MAX-this.WORLD_Y_MIN);
     this.cameras.main.setSize(this.VP_W,this.VP_H);
+    this.cameras.main.setZoom(this._fitZoom());
     this.cameras.main.scrollX=this.FIELD_W/2-this.VP_W/2;
     this.cameras.main.scrollY=this.FIELD_H/2-this.VP_H/2;
     this._clampScroll();
@@ -1025,17 +1028,49 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _onResize(gameSize){
+    const cam=this.cameras.main;
+    // Keep looking at the same spot of the pitch through a rotation or a
+    // window resize (the camera's centre, not its corner, is what matters).
+    const cx=cam.scrollX+this.VP_W/2, cy=cam.scrollY+this.VP_H/2;
     this.VP_W=gameSize.width; this.VP_H=gameSize.height;
-    this.cameras.main.setSize(this.VP_W,this.VP_H);
+    cam.setSize(this.VP_W,this.VP_H);
+    cam.setZoom(this._fitZoom());
+    cam.scrollX=cx-this.VP_W/2; cam.scrollY=cy-this.VP_H/2;
     this._clampScroll();
+  }
+
+  /** Camera zoom for the current screen. On a touch device (phone, tablet)
+   *  turned to landscape the pitch is scaled to the width of the device, so
+   *  it shows the whole width and fills a wide screen instead of leaving
+   *  bars. Everywhere else — portrait, and any desktop window — it stays
+   *  1:1 and scrolls sideways when it's narrower than the pitch, as it
+   *  always has. */
+  _fitZoom(){
+    if(this.VP_W<=this.VP_H||!this._coarsePointer()) return 1;
+    return Phaser.Math.Clamp(this.VP_W/this.FIELD_W,FIT_ZOOM_MIN,FIT_ZOOM_MAX);
+  }
+  /** A touch screen is the main pointer (phones, tablets), not a mouse. */
+  _coarsePointer(){ return !!window.matchMedia?.('(pointer: coarse)').matches; }
+
+  /** Where the camera's scroll may go. Phaser's zoom is about the camera
+   *  centre, so at zoom z the view is VP/z world units and the scroll range
+   *  shifts by half the difference — the same maths as Phaser's own bounds
+   *  clamp, which at zoom 1 reduces to [0, FIELD_W-VP_W] x [Y_MIN, Y_MAX-VP_H]. */
+  _scrollLimits(){
+    const z=this.cameras.main.zoom||1, dw=this.VP_W/z, dh=this.VP_H/z;
+    const minX=(dw-this.VP_W)/2, minY=this.WORLD_Y_MIN+(dh-this.VP_H)/2;
+    return {
+      minX, maxX:Math.max(minX,minX+this.FIELD_W-dw),
+      minY, maxY:Math.max(minY,minY+(this.WORLD_Y_MAX-this.WORLD_Y_MIN)-dh)
+    };
   }
 
   /** Keeps the camera inside the world, which now reaches past both goal lines
    *  by GOAL_RUNOFF so the goals can be centred on screen. */
   _clampScroll(){
-    const cam=this.cameras.main;
-    cam.scrollX=Phaser.Math.Clamp(cam.scrollX,0,Math.max(0,this.FIELD_W-this.VP_W));
-    cam.scrollY=Phaser.Math.Clamp(cam.scrollY,this.WORLD_Y_MIN,Math.max(this.WORLD_Y_MIN,this.WORLD_Y_MAX-this.VP_H));
+    const cam=this.cameras.main, l=this._scrollLimits();
+    cam.scrollX=Phaser.Math.Clamp(cam.scrollX,l.minX,l.maxX);
+    cam.scrollY=Phaser.Math.Clamp(cam.scrollY,l.minY,l.maxY);
   }
 
   /** Smoothly pans the camera back to the centre of the pitch — used after a
@@ -1043,15 +1078,15 @@ export default class GameScene extends Phaser.Scene {
    *  it) could be anywhere near either goal line when it goes in, well off
    *  from the centre-spot restart everyone lines up for next. */
   _centerCameraOnField(durationMs=700){
-    const cam=this.cameras.main;
-    const targetX=Phaser.Math.Clamp(this.FIELD_W/2-this.VP_W/2,0,Math.max(0,this.FIELD_W-this.VP_W));
-    const targetY=Phaser.Math.Clamp(this.FIELD_H/2-this.VP_H/2,this.WORLD_Y_MIN,Math.max(this.WORLD_Y_MIN,this.WORLD_Y_MAX-this.VP_H));
+    const cam=this.cameras.main, l=this._scrollLimits();
+    const targetX=Phaser.Math.Clamp(this.FIELD_W/2-this.VP_W/2,l.minX,l.maxX);
+    const targetY=Phaser.Math.Clamp(this.FIELD_H/2-this.VP_H/2,l.minY,l.maxY);
     this.tweens.add({targets:cam,scrollX:targetX,scrollY:targetY,duration:durationMs,ease:'Cubic.Out'});
   }
 
   _tickScroll(delta){
     const cam=this.cameras.main;
-    const spd=SCROLL_SPEED*(delta/1000);
+    const spd=SCROLL_SPEED*(delta/1000)/(cam.zoom||1); // a screen speed: zoomed in, fewer world units
     const kx=(this.scrollKeys.left?-1:0)+(this.scrollKeys.right?1:0);
     const ky=(this.scrollKeys.up?-1:0)+(this.scrollKeys.down?1:0);
     const vx=Phaser.Math.Clamp(kx+this.joyVec.x,-1,1);
@@ -1070,15 +1105,18 @@ export default class GameScene extends Phaser.Scene {
     if(ev?.shiftKey&&!dx){ dx=dy; dy=0; }
     const cam=this.cameras.main;
     this.tweens.killTweensOf(cam); // don't fight a post-goal recentre
-    cam.scrollX+=dx*unit; cam.scrollY+=dy*unit;
+    const z=cam.zoom||1;
+    cam.scrollX+=dx*unit/z; cam.scrollY+=dy*unit/z;
     this._clampScroll();
     ev?.preventDefault?.();
   }
 
-  /** Convert screen (pointer) coords to world coords accounting for camera. */
+  /** Convert screen (pointer) coords to world coords accounting for camera:
+   *  the camera's centre stays put under zoom, so offsets from the screen
+   *  centre are divided by it. */
   _toWorld(x,y){
-    const cam=this.cameras.main;
-    return {x:x+cam.scrollX, y:y+cam.scrollY};
+    const cam=this.cameras.main, z=cam.zoom||1;
+    return {x:cam.scrollX+this.VP_W/2+(x-this.VP_W/2)/z, y:cam.scrollY+this.VP_H/2+(y-this.VP_H/2)/z};
   }
 
   // ════════════════════════════════════════════════════════════════════
