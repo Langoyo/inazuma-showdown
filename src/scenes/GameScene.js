@@ -1118,6 +1118,7 @@ export default class GameScene extends Phaser.Scene {
       this._edSetFormation(e.target.value); this._renderPitch();
     });
     document.getElementById('pitch-randomize-btn').addEventListener('click',()=>this._randomize());
+    document.getElementById('pitch-clear-btn').addEventListener('click',()=>this._clearTeamTap());
     document.getElementById('squad-whole-team-btn').addEventListener('click',()=>this._useWholeTeam());
     document.getElementById('squad-search').addEventListener('input',()=>this._renderPickListReset());
     this._combos=[
@@ -2304,6 +2305,27 @@ export default class GameScene extends Phaser.Scene {
    *  in an otherwise unpredictable squad. A star pool with nobody left for a
    *  role falls back to an ordinary pick, and _fillSquadByPosition-style
    *  backfill means a thin position never leaves a slot empty. */
+  /** 🗑 beside the dice: empties the XI and the bench of whichever side the
+   *  editor shows. Two taps — the first arms it ("Clear?") for a few
+   *  seconds — so a stray tap can't throw away a team you've built. */
+  _clearTeamTap(){
+    const btn=document.getElementById('pitch-clear-btn');
+    if(!this._clearArmed){
+      this._clearArmed=true; btn.textContent='Clear?'; btn.classList.add('armed');
+      this._clearDisarm=setTimeout(()=>this._disarmClear(),3000);
+      return;
+    }
+    this._disarmClear();
+    this._edSetSlots(Array(TEAM_SIZE).fill(null));
+    this._edSetBench(new Set());
+    this._squadSel=null; this._pickPosFilter=null;
+    this._renderPitch(); this._renderPickList();
+  }
+  _disarmClear(){
+    clearTimeout(this._clearDisarm); this._clearArmed=false;
+    const btn=document.getElementById('pitch-clear-btn');
+    btn.textContent='🗑'; btn.classList.remove('armed');
+  }
   _randomize(){
     // Shape first, then fill it position by position — the slot roles depend
     // on the formation, so picking it afterwards would mismatch them.
@@ -4429,6 +4451,12 @@ export default class GameScene extends Phaser.Scene {
     if(this.matchClock.overtime){ this.matchClock.otElapsed+=delta/1000; return; }
     this.matchClock.secondsRemaining-=delta/1000;
     if(this.matchClock.secondsRemaining<=0){
+      // Time's up mid-duel or mid-shot: the play finishes first (and its
+      // result shows), then the whistle. Nothing new starts meanwhile —
+      // see the stoppage check in _hostUpdate.
+      this.matchClock.secondsRemaining=0;
+      if(this._playStillOn()){ this.matchClock.stoppage=true; return; }
+      this.matchClock.stoppage=false;
       if(this.matchClock.half===1){
         this.matchClock.half=2; this.matchClock.secondsRemaining=this.halfLengthS;
         // Whoever didn't start the match gets the second half, as in a real
@@ -4448,6 +4476,13 @@ export default class GameScene extends Phaser.Scene {
       else if(this.score.a===this.score.b&&this._tournamentPendingFixture?.kind!=='league') this._startOvertime();
       else { this.matchClock.ended=true; this.matchClock.secondsRemaining=0; }
     }
+  }
+  /** A duel or a shot sequence still being decided — or, once the clock has
+   *  run out on one, its result banner not yet showing who won. */
+  _playStillOn(){
+    if(this.confrontation||this.shotSeq) return true;
+    const r=this.confrontResult;
+    return !!(this.matchClock.stoppage&&r&&this.time.now<r.outcomeAt);
   }
   /** Level at full time: golden-goal overtime, as long as it takes — the next
    *  goal wins. Not in a league fixture, where a draw is a result that
@@ -4691,7 +4726,7 @@ export default class GameScene extends Phaser.Scene {
 
     if(this.confrontation){
       this._progressConfront(now,myInput,inputB,aiActive);
-    } else if(!this.matchClock.ended && !this._checkOutOfBounds(now)){
+    } else if(!this.matchClock.ended && !this.matchClock.stoppage && !this._checkOutOfBounds(now)){
       this._updateActive('A'); this._updateActive('B');
       this._moveTeam('A',myInput.targets,now); this._moveTeam('B',inputB.targets,now);
       if(myInput.passTarget&&this.possRole==='A') this._doPass('A',myInput.passTarget);

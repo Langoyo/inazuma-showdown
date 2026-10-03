@@ -4,6 +4,23 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Time up mid-duel waits for the duel; a button to clear the team
+- **The whistle waits for the play.**
+  - If the clock runs out during a duel or a shot, it holds at 0:00
+    until that's decided and its result banner has shown who won. Then
+    comes half time or full time (`_playStillOn`,
+    `matchClock.stoppage`).
+  - Nothing new starts in the meantime: players don't take on new duels
+    or shots during that stoppage.
+  - With nothing going on, time up ends the half at once, as before.
+- **🗑 Clear the team**, next to the 🎲 on the formation pitch.
+  - Empties the XI and the bench of the side being edited (yours, or the
+    rival's on the Rival tab).
+  - It takes two taps: the first shows "Clear?" for 3 seconds, so a
+    stray tap can't throw a team away.
+- Tests: `match-tweaks.spec.js` (time running out mid-play),
+  `squad-editor.spec.js` (clear team button).
+
 ## Rival team color, and an element wheel in duels
 - **The color picker follows the Me/Rival tab.**
   - On the Rival tab it reads "Rival team color" and sets the AI rival's

@@ -115,3 +115,61 @@ test.describe('Hard AI shooting', () => {
     expect(await scene(page, { level: 'normal', y: 1520 - 440 })).toBeGreaterThan(30);
   });
 });
+
+test.describe('time running out mid-play', () => {
+  test('the half waits for a duel to finish and its result to show, then the whistle goes', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      s._setPaused(true); // drive the clock by hand, without play moving on underneath
+      const out = {};
+      s.confrontation = { type: 'duel', attackerRole: 'A', defenderRole: 'B', attackerId: s.teamA[5].id, defenderId: s.teamB[5].id };
+      s.matchClock.secondsRemaining = 0.05;
+      s._tickClock(100);
+      out.duringDuel = { half: s.matchClock.half, stoppage: s.matchClock.stoppage, left: s.matchClock.secondsRemaining };
+      // The duel is decided: its banner names the winner a beat later.
+      s.confrontation = null;
+      s.confrontResult = { title: 'x', outcome: 'y', until: s.time.now + 3000, outcomeAt: s.time.now + 800 };
+      s._tickClock(100);
+      out.beforeResult = s.matchClock.half;
+      s.confrontResult.outcomeAt = s.time.now - 1;
+      s._tickClock(100);
+      out.after = { half: s.matchClock.half, stoppage: s.matchClock.stoppage };
+      return out;
+    });
+    expect(r.duringDuel).toEqual({ half: 1, stoppage: true, left: 0 });
+    expect(r.beforeResult).toBe(1);
+    expect(r.after).toEqual({ half: 2, stoppage: false });
+  });
+
+  test('full time waits for a shot being decided', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      s._setPaused(true);
+      Object.assign(s.matchClock, { half: 2, secondsRemaining: 0.05 });
+      s.score.a = 1;
+      s.shotSeq = { stages: [], idx: 0 };
+      s._tickClock(100);
+      const held = s.matchClock.ended;
+      s.shotSeq = null; s.confrontResult = null;
+      s._tickClock(100);
+      return { held, ended: s.matchClock.ended };
+    });
+    expect(r).toEqual({ held: false, ended: true });
+  });
+
+  test('time up with nothing going on still ends the half at once', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const half = await page.evaluate(() => {
+      const s = window.__scene; s._setPaused(true);
+      s.confrontation = null; s.shotSeq = null;
+      s.matchClock.secondsRemaining = 0.05; s._tickClock(100);
+      return s.matchClock.half;
+    });
+    expect(half).toBe(2);
+  });
+});
