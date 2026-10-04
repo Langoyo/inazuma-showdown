@@ -385,6 +385,7 @@ const AI_LEVELS = {
             shotGate:{ closeRange:270, maxReach:0.55, pressFrac:0.6 } }
 };
 const AI_LEVEL_DEFAULT = 'normal';
+const AI_LEVEL_LABEL = { easy:'Easy', normal:'Normal', hard:'Hard', expert:'Expert' };
 const AI_SPEED_BONUS_SHARE = 0.5; // movement gets half the stat inflation
 
 // Fouls are meant to be a rare punctuation, not a regular interruption:
@@ -894,7 +895,9 @@ export default class GameScene extends Phaser.Scene {
     if(noRivalTab&&this.editSide==='rival') this._setEditSide('me');
     if(multi) this._renderNetStatus(); else document.getElementById('squad-status').textContent='';
     // No AI plays in multiplayer, so its difficulty has nothing to affect.
-    document.getElementById('ai-difficulty-row').style.display=multi?'none':'flex';
+    // Tournaments and stories set theirs up front (and keep it for the whole
+    // run), so the editor's own selector is for solo only.
+    document.getElementById('ai-difficulty-row').style.display=(multi||this.uiMode==='tournament'||this.uiMode==='story')?'none':'flex';
     // Half length is host-authoritative once a match is running (the guest
     // just mirrors whatever the host picked — see _syncRoleFromNet's own
     // note and the client-side clock sync in _incomingState) — only the
@@ -1003,7 +1006,12 @@ export default class GameScene extends Phaser.Scene {
     const badge=document.getElementById('mode-badge');
     const multi=this._vsHuman();
     const text=this._twoHosts?'⚠ Both players are hosting'
-      :multi?`👥 Multiplayer · ${this.role==='A'?'host':'guest'}${this._pingMs!=null?` · ${Math.round(this._pingMs)} ms`:''}`:'🤖 Solo (vs AI)';
+      :multi?`👥 Multiplayer · ${this.role==='A'?'host':'guest'}${this._pingMs!=null?` · ${Math.round(this._pingMs)} ms`:''}`
+      // uiMode is back to its default after the reload between a tournament's
+      // matches, so the fixture/step being played says what this match is.
+      :(this._tournamentPendingFixture||this.uiMode==='tournament')?`🏆 Tournament · ${AI_LEVEL_LABEL[this.aiLevel]||''}`
+      :(this._storyPending||this.uiMode==='story')?`📖 Story · ${AI_LEVEL_LABEL[this.aiLevel]||''}`
+      :'🤖 Solo (vs AI)';
     if(badge.textContent!==text) badge.textContent=text;
     badge.classList.toggle('is-multi',multi);
   }
@@ -2580,6 +2588,7 @@ export default class GameScene extends Phaser.Scene {
   _confirmTournamentSetup(){
     this.pendingTournamentType=document.querySelector('input[name="tournament-type"]:checked')?.value||'knockout';
     this.pendingTournamentSize=parseInt(document.querySelector('input[name="tournament-size"]:checked')?.value,10)||4;
+    this._setAiLevel(document.getElementById('tournament-ai-level')?.value);
     this.uiMode='tournament';
     this._applyUiMode();
     document.getElementById('tournament-panel').style.display='none';
@@ -2610,9 +2619,10 @@ export default class GameScene extends Phaser.Scene {
       ?makeSeededKnockout(['me',...opponents.slice().sort((a,b)=>this._entrantStrength(b)-this._entrantStrength(a))])
       :makeLeague(['me',...opponents]);
     // Half length is picked once, in the editor this squad was just built
-    // in, and rides along with the tournament: every fixture ends in a page
-    // reload (see _returnToMenu) that would otherwise reset it to the default.
-    this.activeTournament={...built,mySquad,halfLengthS:this.halfLengthS};
+    // in, and the AI difficulty on the setup form before it; both ride along
+    // with the tournament: every fixture ends in a page reload (see
+    // _returnToMenu) that would otherwise reset them to the defaults.
+    this.activeTournament={...built,mySquad,halfLengthS:this.halfLengthS,aiLevel:this.aiLevel};
     saveTournament(this.activeTournament);
     document.getElementById('squad-editor-panel').style.display='none';
     document.getElementById('tournament-panel').style.display='flex';
@@ -2626,6 +2636,9 @@ export default class GameScene extends Phaser.Scene {
     const opponent=pending.a==='me'?pending.b:pending.a;
     this._setRivalToEntrant(opponent);
     this._tournamentPendingFixture=pending;
+    // Every one of your matches plays at the difficulty picked at the start
+    // (a tournament saved before that was recorded plays on Normal, as it did).
+    this._setAiLevel(this.activeTournament.aiLevel);
     if(this.activeTournament.halfLengthS){
       this.halfLengthS=this.activeTournament.halfLengthS;
       this.matchClock.secondsRemaining=this.halfLengthS;
@@ -2671,7 +2684,8 @@ export default class GameScene extends Phaser.Scene {
             <label style="font-size:13px;"><input type="radio" name="tournament-size" value="8"> 8</label>
             <label style="font-size:13px;"><input type="radio" name="tournament-size" value="16"> 16</label>
           </div>
-          <div style="font-size:11px;opacity:.7;margin-bottom:10px;text-align:center;">Next, build your squad and pick the half length — both lock in for the whole tournament once it starts. Opponents are drawn at random from the game's real teams; in a knockout they get tougher each round you win, a league stays one flat difficulty throughout.</div>
+          ${this._levelSelectHtml('tournament-ai-level')}
+          <div style="font-size:11px;opacity:.7;margin-bottom:10px;text-align:center;">Every match you play in it uses that difficulty. Next, build your squad and pick the half length — both lock in for the whole tournament once it starts. Opponents are drawn at random from the game's real teams; in a knockout the teams get tougher each round you win, while a league is a flat random draw.</div>
           <div style="text-align:center;"><button class="nes-btn is-primary" data-tournament-action="setup-continue">Continue</button></div>
         </div>`;
       return;
@@ -2691,7 +2705,7 @@ export default class GameScene extends Phaser.Scene {
       </div>`;
     };
     const headerHtml=`<div style="font-size:12px;opacity:.75;margin-bottom:4px;">${t.type==='knockout'?'Knockout':'League'} — ${t.entrants.length} teams</div>
-      <div style="font-size:11px;opacity:.7;margin-bottom:10px;">Your squad: ${t.mySquad?.formation||'?'}${t.halfLengthS?` · ${Math.round(t.halfLengthS/60)} min halves`:''} (locked for this tournament)</div>`;
+      <div style="font-size:11px;opacity:.7;margin-bottom:10px;">Your squad: ${t.mySquad?.formation||'?'}${t.halfLengthS?` · ${Math.round(t.halfLengthS/60)} min halves`:''} · ${AI_LEVEL_LABEL[t.aiLevel]||AI_LEVEL_LABEL[AI_LEVEL_DEFAULT]} difficulty (locked for this tournament)</div>`;
     let bodyHtml;
     if(t.type==='knockout'){
       bodyHtml=`${headerHtml}<div style="display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;max-width:100%;">
@@ -2752,7 +2766,7 @@ export default class GameScene extends Phaser.Scene {
     const st=this.activeStory;
     if(!st){
       const done=new Set(this._readProfile().record.storiesCompleted);
-      body.innerHTML=STORY_RUNS.map(run=>{
+      body.innerHTML=this._levelSelectHtml('story-ai-level')+STORY_RUNS.map(run=>{
         const steps=this._storySteps(run); if(steps.length<3) return '';
         const hero=this._storyHeroPool(run).length>=STORY_MIN_PLAYERS?` · play as ${escHtml(run.hero)} or your own XI`:'';
         return `<div class="story-run"><div><div class="story-run-title">${escHtml(run.game)} — ${escHtml(run.title)}${done.has(run.id)?' <span class="story-done">✓ completed</span>':''}</div>
@@ -2780,7 +2794,7 @@ export default class GameScene extends Phaser.Scene {
         +(tries?`<div class="story-meta">${tries} ${tries>1?'tries':'try'} so far</div>`:'')
         +`<div style="margin-top:10px;"><button class="nes-btn is-error is-compact" data-story-action="end">Abandon story</button></div>`;
     }
-    body.innerHTML=`<div class="story-head">${escHtml(run.game)} — ${escHtml(run.title)} · ${Math.min(st.step,steps.length)}/${steps.length}</div>
+    body.innerHTML=`<div class="story-head">${escHtml(run.game)} — ${escHtml(run.title)} · ${Math.min(st.step,steps.length)}/${steps.length} · ${AI_LEVEL_LABEL[st.aiLevel]||AI_LEVEL_LABEL[AI_LEVEL_DEFAULT]}</div>
       <ol class="story-ladder">${rows}</ol>${action}`;
   }
   /** Story start: build the squad (or field the run's own team), which then
@@ -2788,6 +2802,8 @@ export default class GameScene extends Phaser.Scene {
   _startStorySetup(runId){
     if(!getStoryRun(runId)) return;
     this.pendingStoryRun=runId;
+    // The difficulty picked above the run list is locked in for the whole run.
+    this._setAiLevel(document.getElementById('story-ai-level')?.value);
     this.uiMode='story';
     this._applyUiMode();
     document.getElementById('story-panel').style.display='none';
@@ -2816,7 +2832,7 @@ export default class GameScene extends Phaser.Scene {
     this._setRivalToEntrant(step.entrant);
     this._rivalName=step.team;
     this._storyPending={step:st.step};
-    if(AI_LEVELS[st.aiLevel]) this.aiLevel=st.aiLevel;
+    this._setAiLevel(st.aiLevel);
     if(st.halfLengthS){ this.halfLengthS=st.halfLengthS; this.matchClock.secondsRemaining=this.halfLengthS; this._renderClock(this.matchClock); }
     document.getElementById('story-panel').style.display='none';
     this._startMatch(st.mySquad,this._rivalSquadPayload());
@@ -4301,6 +4317,22 @@ export default class GameScene extends Phaser.Scene {
     return 1-t*(1-SHOT_FALLOFF_MIN);
   }
   _aiParams(){ return AI_LEVELS[this.aiLevel]||AI_LEVELS[AI_LEVEL_DEFAULT]; }
+  /** One place that changes the AI level, keeping the squad editor's own
+   *  selector (used in solo) in step. Unknown values fall back to the default. */
+  _setAiLevel(level){
+    this.aiLevel=AI_LEVELS[level]?level:AI_LEVEL_DEFAULT;
+    const sel=document.getElementById('ai-level-select'); if(sel) sel.value=this.aiLevel;
+  }
+  /** "Difficulty" selector for the tournament setup form and the story list:
+   *  that choice is locked in for every match of the run (see
+   *  _startTournamentWithSquad / _startStoryWithSquad). Starts on whatever
+   *  was used last. */
+  _levelSelectHtml(id){
+    return `<div style="display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:12px;flex-wrap:wrap;">
+      <label for="${id}" style="font-size:12px;">AI difficulty:</label>
+      <select id="${id}" class="pixel-select">${Object.entries(AI_LEVEL_LABEL).map(([k,v])=>`<option value="${k}"${k===this.aiLevel?' selected':''}>${v}</option>`).join('')}</select>
+    </div>`;
+  }
   /** Difficulty stat inflation for `role`, applied live rather than baked
    *  into the stored stats: it only ever applies to the AI's own side (B,
    *  and only while nobody is connected to play it), so switching level or

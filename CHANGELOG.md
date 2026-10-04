@@ -4,6 +4,24 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Tournament and story difficulty: pick it up front, every match plays at it
+- **Before:** the AI difficulty was only a small selector in the squad
+  editor. A story saved the level, but a tournament didn't, so after the
+  reload that ends every match, each later fixture silently played on
+  Normal whatever you'd picked.
+- **Now** you choose the **AI difficulty** (Easy / Normal / Hard / Expert)
+  on the tournament setup form, and above the run list for a story. It's
+  locked in for the whole run, and every one of your matches plays at it,
+  across the reloads (`aiLevel` is saved with the tournament, as the
+  story already did).
+  - The squad editor's own selector is for solo only now, so there's one
+    place to set it.
+  - The tournament header and the story ladder show the level, and the
+    match badge reads "🏆 Tournament · Hard" or "📖 Story · Hard".
+  - A tournament saved before this plays on Normal, as it always did.
+- Tests: `tournaments.spec.js` and `story.spec.js` (the level applies to
+  every match across a reload, and old saves fall back to Normal).
+
 ## Time stops in duels, a sweat drop for tired players, rival stats on a long press
 - **Match time stops during duels.**
   - Before, the clock ran through the choice window (up to 20s), the VS
