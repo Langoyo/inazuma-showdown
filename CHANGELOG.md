@@ -23,6 +23,10 @@ crisp at any zoom with Phaser's `pixelArt` mode on.
   (faster at speed), stand idle when still, and face left or right the way
   they're going. It's worked out from each sprite's own movement, so the
   guest's screen animates the same way from the synced positions.
+- **Names in team colours.** Each name plate is filled with its team's
+  colour, with white or dark text, whichever reads better on it (a light
+  kit gets dark text, a dark one white). A stunned player's plate keeps
+  the team colour.
 - **Stun and active.** A stunned player's kit greys out. The player each
   side is steering has a white pixel ring at their feet.
 - **The ball** has classic black patches and spins as it rolls (4

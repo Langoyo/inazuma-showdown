@@ -105,6 +105,32 @@ test.describe('pixel art', () => {
     expect(r.ringsB).toEqual([r.activeB]);
   });
 
+  test('name plates wear the team colour, with text that stays readable on it', async ({ page }) => {
+    await match(page);
+    const read = (A, B) => page.evaluate(([A, B]) => {
+      const s = window.__scene;
+      if (A != null) s.teamColorA = A;
+      if (B != null) s.teamColorB = B;
+      s._highlightActive();
+      const rgba = (c) => `rgba(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255},0.92)`;
+      const l = (e) => ({ bg: e.label.style.backgroundColor, color: e.label.style.color });
+      return { a: l(s.teamA[3]), b: l(s.teamB[3]), wantA: rgba(s.teamColorA), wantB: rgba(s.teamColorB) };
+    }, [A, B]);
+    // Whatever the teams are, each plate is its own team's colour.
+    const r0 = await read(null, null);
+    expect(r0.a.bg).toBe(r0.wantA);
+    expect(r0.b.bg).toBe(r0.wantB);
+    expect(r0.a.bg).not.toBe(r0.b.bg);
+    // A very light kit gets dark text, a very dark one white.
+    const r1 = await read(0xf5f5f5, 0x10204a);
+    expect(r1.a.color).toBe('#14142b');
+    expect(r1.b.color).toBe('#ffffff');
+    // Stunned players keep their team's plate (only the kit greys out).
+    await page.evaluate(() => { const s = window.__scene; s._setPaused(true); s.stunMap.set(s.teamA[3].id, s.time.now + 60000); s._highlightActive(); });
+    const stunned = await page.evaluate(() => window.__scene.teamA[3].label.style.backgroundColor);
+    expect(stunned).toBe(r1.wantA);
+  });
+
   test('the ball spins as it rolls', async ({ page }) => {
     await match(page);
     await page.evaluate(() => { const s = window.__scene; s._setPaused(true); window.__ballFrames = new Set(); });

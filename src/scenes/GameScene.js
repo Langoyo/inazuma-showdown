@@ -160,6 +160,7 @@ const RUN_ANIM_MIN_SPEED  = 18;  // px/s: slower than this shows the idle frame
 const RUN_STRIDE_PX       = 9;   // px moved per run-cycle frame
 const RUN_FACING_DEADZONE = 12;  // px/s sideways before a player turns to face that way
 const BALL_ROLL_PX        = 5;   // px rolled per ball frame
+const NAME_DARK_TEXT_ABOVE = 0.6; // luminance (0-1) above which a team-colour name plate gets dark text
 const BALL_DRAW_DY        = 8;   // ball drawn this far below its physics position, at the sprites' feet    // camera pan per wheel "line" when the browser counts lines, not pixels
 
 // Physics forces — the ball carrier is only slightly sharper than everyone
@@ -2906,6 +2907,14 @@ export default class GameScene extends Phaser.Scene {
     if(px.kitTint!==kit){ px.kit.setTint(kit); px.kitTint=kit; }
     e.gfx.setAlpha(stunned?0.8:1);
     px.ring.setVisible(active);
+    // The name plate wears the team colour too (not greyed when stunned), with
+    // white or dark text, whichever reads better on it.
+    if(e.label&&px.plateColor!==color){
+      px.plateColor=color;
+      const r=(color>>16)&255, g=(color>>8)&255, b=color&255;
+      const light=(0.299*r+0.587*g+0.114*b)/255>NAME_DARK_TEXT_ABOVE;
+      e.label.setBackgroundColor(`rgba(${r},${g},${b},0.92)`).setColor(light?'#14142b':'#ffffff');
+    }
   }
   /** Tints the hair from the player's portrait once it has been sampled
    *  (see gfx/hairColor.js); still the same player by then, or it's skipped. */
