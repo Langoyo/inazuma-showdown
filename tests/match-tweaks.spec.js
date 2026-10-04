@@ -37,25 +37,47 @@ test.describe('duel cards', () => {
 });
 
 test.describe('offside', () => {
-  test('play freezes for a beat and the offside side restarts from behind the ball', async ({ page }) => {
-    await match(page);
-    const r = await page.evaluate(() => {
-      const s = window.__scene;
-      const out = s.teamA.filter((e) => e.slot !== 0).slice(0, 2);
-      s.matter.body.setPosition(s.ball, { x: 480, y: 600 });
-      window.__put(out[0], 300, 400); window.__put(out[1], 700, 450);
-      s._commitOffside('A', s.time.now);
-      return { paused: s.paused, ys: out.map((e) => e.body.position.y), xs: out.map((e) => e.body.position.x), ballY: s.ball.position.y, title: s.confrontResult.title };
+  // The offside side goes back to its own half for the free kick; anyone
+  // already there, and the keeper, stay put. A defends the bottom (attacks
+  // y=0), B the top (attacks y=1520).
+  for (const [role, ball, inRivalHalf, inOwnHalf] of [
+    ['A', { x: 480, y: 600 }, [{ x: 300, y: 400 }, { x: 700, y: 700 }], [{ x: 520, y: 1100 }]],
+    ['B', { x: 480, y: 920 }, [{ x: 300, y: 1120 }, { x: 700, y: 820 }], [{ x: 520, y: 420 }]],
+  ]) {
+    test(`play freezes for a beat and side ${role} drops back to its own half`, async ({ page }) => {
+      await match(page);
+      const r = await page.evaluate(([role, ball, rivalHalf, ownHalf]) => {
+        const s = window.__scene;
+        const team = role === 'A' ? s.teamA : s.teamB;
+        const out = team.filter((e) => e.slot !== 0);
+        const gk = team.find((e) => e.slot === 0);
+        s.matter.body.setPosition(s.ball, ball);
+        const movers = out.slice(0, rivalHalf.length), stayers = out.slice(rivalHalf.length, rivalHalf.length + ownHalf.length);
+        movers.forEach((e, i) => window.__put(e, rivalHalf[i].x, rivalHalf[i].y));
+        stayers.forEach((e, i) => window.__put(e, ownHalf[i].x, ownHalf[i].y));
+        const gkBefore = { x: gk.body.position.x, y: gk.body.position.y };
+        s._commitOffside(role, s.time.now);
+        const half = s.FIELD_H / 2;
+        return {
+          paused: s.paused, title: s.confrontResult.title,
+          moversOwnHalf: movers.map((e) => (role === 'A' ? e.body.position.y > half : e.body.position.y < half)),
+          moversAtFormation: movers.map((e) => { const p = s._formPos(role, e.slot, { x: s.FIELD_W / 2, y: half }, true); return Math.hypot(p.x - e.body.position.x, p.y - e.body.position.y) < 2; }),
+          stayers: stayers.map((e, i) => [e.body.position.x - ownHalf[i].x, e.body.position.y - ownHalf[i].y]),
+          gkMoved: Math.hypot(gk.body.position.x - gkBefore.x, gk.body.position.y - gkBefore.y),
+          nobodyInRivalHalf: out.filter((e) => (role === 'A' ? e.body.position.y < half : e.body.position.y > half)).length,
+        };
+      }, [role, ball, inRivalHalf, inOwnHalf]);
+      expect(r.paused).toBe(true);
+      expect(r.title).toContain('Offside');
+      expect(r.moversOwnHalf).toEqual([true, true]);        // sent home...
+      expect(r.moversAtFormation).toEqual([true, true]);    // ...to their kickoff spots
+      expect(r.stayers).toEqual([[0, 0]]);                  // already home: left alone
+      expect(r.gkMoved).toBe(0);
+      // The flag is on screen during the freeze, not just after it.
+      await expect(page.locator('#result-title')).toContainText('Offside');
+      await page.waitForFunction(() => window.__scene.paused === false, { timeout: 4000 });
     });
-    expect(r.paused).toBe(true);
-    expect(r.title).toContain('Offside');
-    // A attacks toward y=0, so "behind the ball" is below it.
-    for (const y of r.ys) expect(y).toBeGreaterThanOrEqual(r.ballY + 39);
-    expect(r.xs).toEqual([300, 700]); // they keep their lanes
-    // The flag is on screen during the freeze, not just after it.
-    await expect(page.locator('#result-title')).toContainText('Offside');
-    await page.waitForFunction(() => window.__scene.paused === false, { timeout: 4000 });
-  });
+  }
 });
 
 test.describe('stamina', () => {
@@ -113,5 +135,63 @@ test.describe('Hard AI shooting', () => {
   test('Normal still shoots on sight once in range', async ({ page }) => {
     await match(page);
     expect(await scene(page, { level: 'normal', y: 1520 - 440 })).toBeGreaterThan(30);
+  });
+});
+
+test.describe('time running out mid-play', () => {
+  test('the half waits for a duel to finish and its result to show, then the whistle goes', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      s._setPaused(true); // drive the clock by hand, without play moving on underneath
+      const out = {};
+      s.confrontation = { type: 'duel', attackerRole: 'A', defenderRole: 'B', attackerId: s.teamA[5].id, defenderId: s.teamB[5].id };
+      s.matchClock.secondsRemaining = 0.05;
+      s._tickClock(100);
+      out.duringDuel = { half: s.matchClock.half, stoppage: s.matchClock.stoppage, left: s.matchClock.secondsRemaining };
+      // The duel is decided: its banner names the winner a beat later.
+      s.confrontation = null;
+      s.confrontResult = { title: 'x', outcome: 'y', until: s.time.now + 3000, outcomeAt: s.time.now + 800 };
+      s._tickClock(100);
+      out.beforeResult = s.matchClock.half;
+      s.confrontResult.outcomeAt = s.time.now - 1;
+      s._tickClock(100);
+      out.after = { half: s.matchClock.half, stoppage: s.matchClock.stoppage };
+      return out;
+    });
+    expect(r.duringDuel).toEqual({ half: 1, stoppage: true, left: 0 });
+    expect(r.beforeResult).toBe(1);
+    expect(r.after).toEqual({ half: 2, stoppage: false });
+  });
+
+  test('full time waits for a shot being decided', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const r = await page.evaluate(() => {
+      const s = window.__scene;
+      s._setPaused(true);
+      Object.assign(s.matchClock, { half: 2, secondsRemaining: 0.05 });
+      s.score.a = 1;
+      s.shotSeq = { stages: [], idx: 0 };
+      s._tickClock(100);
+      const held = s.matchClock.ended;
+      s.shotSeq = null; s.confrontResult = null;
+      s._tickClock(100);
+      return { held, ended: s.matchClock.ended };
+    });
+    expect(r).toEqual({ held: false, ended: true });
+  });
+
+  test('time up with nothing going on still ends the half at once', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await startMatch(page);
+    const half = await page.evaluate(() => {
+      const s = window.__scene; s._setPaused(true);
+      s.confrontation = null; s.shotSeq = null;
+      s.matchClock.secondsRemaining = 0.05; s._tickClock(100);
+      return s.matchClock.half;
+    });
+    expect(half).toBe(2);
   });
 });

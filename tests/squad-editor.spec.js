@@ -73,6 +73,33 @@ test.describe('random squad builder', () => {
   });
 });
 
+test.describe('clear team button', () => {
+  test('two taps empty the XI and the bench of the side being edited; one tap alone does nothing', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await page.click('#pitch-randomize-btn');
+    await page.click('#squad-side-tabs [data-side="rival"]');
+    await page.click('#pitch-randomize-btn');
+    await page.click('#squad-side-tabs [data-side="me"]');
+    const count = () => page.evaluate(() => { const s = window.__scene; return { mine: s.squadSlots.filter(Boolean).length, bench: s.benchIds.size, rival: s.rivalSquadSlots.filter(Boolean).length }; });
+    await page.click('#pitch-clear-btn');
+    await expect(page.locator('#pitch-clear-btn')).toHaveText('Clear?');
+    expect((await count()).mine).toBe(11); // armed, not yet cleared
+    await page.click('#pitch-clear-btn');
+    expect(await count()).toEqual({ mine: 0, bench: 0, rival: 11 });
+    await expect(page.locator('#pitch-clear-btn')).toHaveText('🗑');
+    await expect(page.locator('#formation-pitch .slot-pin:not(.empty)')).toHaveCount(0);
+  });
+
+  test('an armed clear disarms itself after a few seconds', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await page.click('#pitch-randomize-btn');
+    await page.click('#pitch-clear-btn');
+    await expect(page.locator('#pitch-clear-btn')).toHaveText('🗑', { timeout: 5000 });
+    await page.click('#pitch-clear-btn'); // a fresh first tap again
+    expect(await page.evaluate(() => window.__scene.squadSlots.filter(Boolean).length)).toBe(11);
+  });
+});
+
 test.describe('team color selector', () => {
   test('picking a color overrides the auto-derived kit color on the pitch', async ({ page }) => {
     await waitForRosterLoaded(page);
@@ -87,6 +114,25 @@ test.describe('team color selector', () => {
       return { role: s.role, teamColor: s._css3(s.role === 'A' ? s.teamColorA : s.teamColorB) };
     });
     expect(info.teamColor).toBe('#00ff00');
+  });
+
+  test('on the Rival tab the same control sets the AI rival\'s kit, and yours stays as it was', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    await page.click('#pitch-randomize-btn');
+    await page.fill('#my-team-color', '#00ff00');
+    await page.dispatchEvent('#my-team-color', 'input');
+    await page.click('#squad-side-tabs [data-side="rival"]');
+    await expect(page.locator('#team-color-label')).toHaveText('Rival team color:');
+    await expect(page.locator('#my-team-color-auto')).toBeChecked(); // the rival starts on Automatic
+    await page.fill('#my-team-color', '#ff00ff');
+    await page.dispatchEvent('#my-team-color', 'input');
+    await page.click('#squad-side-tabs [data-side="me"]');
+    await expect(page.locator('#team-color-label')).toHaveText('Your team color:');
+    expect(await page.inputValue('#my-team-color')).toBe('#00ff00');
+    await page.click('#confirm-squad-btn');
+    await page.waitForFunction(() => window.__scene?.matchStarted === true, { timeout: 10000 });
+    const kits = await page.evaluate(() => { const s = window.__scene; return { a: s._css3(s.teamColorA), b: s._css3(s.teamColorB) }; });
+    expect(kits).toEqual({ a: '#00ff00', b: '#ff00ff' });
   });
 
   test('starts on Automatic, previewing the color that pick actually gives', async ({ page }) => {

@@ -4,6 +4,148 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Offside: the offside side goes back to its own half
+- **Before:** only the offside side's players who were ahead of the ball
+  were moved, to 40px behind it. That's still in the rival's half, so
+  the team stayed crowded around the free kick.
+- **Now:** every outfield player of the side that committed the offside
+  who is in the rival's half, ahead of the ball or not, is sent back to
+  their formation spot in their own half, the kickoff layout
+  (`_formPos` with `clampOwnHalf`), which keeps the team's shape and
+  drops off the halfway line since the other side now has the ball.
+  - Players already in their own half stay where they are, and so does
+    the keeper.
+  - The flag banner and 1.5s freeze are unchanged; the free kick is still
+    taken from the spot. `OFFSIDE_PUSHBACK` is gone.
+- Tests: `match-tweaks.spec.js`, for both sides: players sent home, to
+  their kickoff spots; players already home and the keeper untouched.
+
+## Pixel-art match: footballers, ball, pitch and effects
+The menus were already retro (nes.css, pixel fonts, pixel portraits), but
+the match was drawn with smooth vector shapes. Now it's pixel art too,
+painted in code at load time (`src/gfx/pixelArt.js`): no image files, and
+crisp at any zoom with Phaser's `pixelArt` mode on.
+- **Footballers.** Each player is a 12×16 pixel sprite drawn at 2×, with
+  three layers so colours are just tints:
+  - an outline / skin / shorts / boots base;
+  - a white kit tinted with the team colour;
+  - white hair tinted with that player's own hair colour.
+- **Hair from the portrait.** The colour is the dominant colour at the
+  top of their pixel portrait (`src/gfx/hairColor.js`, loaded in the
+  background). It follows substitutions and swaps.
+- **Keepers** wear gloves and a darker shade of the kit. That follows
+  whoever is in goal, through substitutions too.
+- **Run cycle and facing.** Players run through four frames when moving
+  (faster at speed), stand idle when still, and face left or right the way
+  they're going. It's worked out from each sprite's own movement, so the
+  guest's screen animates the same way from the synced positions.
+- **Names in team colours.** Each name plate is filled with its team's
+  colour, with white or dark text, whichever reads better on it (a light
+  kit gets dark text, a dark one white). A stunned player's plate keeps
+  the team colour.
+- **Stun and active.** A stunned player's kit greys out. The player each
+  side is steering has a white pixel ring at their feet.
+- **The ball** has classic black patches and spins as it rolls (4
+  frames). It's drawn at the players' feet and over them, so it never
+  disappears behind a sprite. There's a pixel shadow when it's in the
+  air.
+- **The pitch** is one pixel image:
+  - mown stripes and a light speckle;
+  - chunky white markings (touchlines, halfway line, centre circle and
+    spot, penalty and goal areas, spots, the "D", corner arcs);
+  - the darker run-off behind each goal, and pixel goal nets with posts.
+- **Markers and effects:**
+  - a gold pixel arrow bobs over the ball carrier;
+  - technique and save bursts grow as pixel rings;
+  - drawn runs are dotted pixel trails;
+  - pass, shot and keeper-reach markers are stepped pixel rings;
+  - "SAVE!" and the technique names use the pixel font.
+- Tests: new `tests/pixel-art.spec.js`. `player-images.spec.js` now
+  checks that the on-pitch sprites are pixel footballers rather than
+  portraits.
+
+## Landscape on a phone or tablet: the pitch scales to the screen width
+- **Before:** the pitch always drew 1:1 at 960px wide. A screen wider than
+  that showed black bars either side, and a phone in landscape just
+  showed a 960px window of it.
+- **Now, on a touch device in landscape** (wider than tall), the camera
+  zooms so the pitch is exactly the width of the screen (`_fitZoom`,
+  width / 960, clamped 0.4–3). A wide screen is filled edge to edge, and
+  a phone shows the whole width of the pitch. The height scrolls as
+  before.
+  - **Desktop is unchanged:** a mouse-driven browser window, whatever its
+    shape, stays 1:1 (`(pointer: coarse)` decides what's a touch device).
+  - **Portrait is unchanged:** 1:1, scrolling sideways on a narrow phone.
+  - **Rotating** keeps looking at the same part of the pitch (the
+    camera's centre is preserved), and rotating back returns to 1:1.
+  - **Taps** land where the pitch is drawn: pointer → world maths
+    accounts for the zoom (`_toWorld`). The scroll limits do too
+    (`_scrollLimits`), which also fixes the post-goal recentre.
+  - Joystick, keys and the mouse wheel pan at the same speed on screen
+    at any zoom.
+- Tests: `technique-elements.spec.js`, "landscape fits the pitch to the
+  screen width".
+
+## Time up mid-duel waits for the duel; a button to clear the team
+- **The whistle waits for the play.**
+  - If the clock runs out during a duel or a shot, it holds at 0:00
+    until that's decided and its result banner has shown who won. Then
+    comes half time or full time (`_playStillOn`,
+    `matchClock.stoppage`).
+  - Nothing new starts in the meantime: players don't take on new duels
+    or shots during that stoppage.
+  - With nothing going on, time up ends the half at once, as before.
+- **🗑 Clear the team**, next to the 🎲 on the formation pitch.
+  - Empties the XI and the bench of the side being edited (yours, or the
+    rival's on the Rival tab).
+  - It takes two taps: the first shows "Clear?" for 3 seconds, so a
+    stray tap can't throw a team away.
+- Tests: `match-tweaks.spec.js` (time running out mid-play),
+  `squad-editor.spec.js` (clear team button).
+
+## Rival team color, and an element wheel in duels
+- **The color picker follows the Me/Rival tab.**
+  - On the Rival tab it reads "Rival team color" and sets the AI rival's
+    kit (`rivalTeamColor`, Automatic by default). Your own color is left
+    alone.
+  - The rival's squad carries it into the match, rematches included. If
+    the two colors are too alike, the rival's is still shifted so the
+    sides can be told apart.
+- **Element wheel in duels**, like the games' chart: Fire → Wood → Air →
+  Earth (⛰️) → Fire round a circle, an arrow from each element to the one
+  it beats (`_elementWheel`, an inline SVG).
+  - On the VS card under "VS", and in the duel panel between your
+    element and the rival's.
+  - Both elements are ringed in their team's color and the rest dimmed.
+    When one beats the other, that arrow glows gold and flows (still
+    with reduced motion).
+  - A Void move isn't on the wheel.
+  - Both spots are re-rendered only when the matchup changes, so the
+    animation doesn't restart every frame.
+- Tests: `squad-editor.spec.js` (rival color), `technique-elements.spec.js`
+  (wheel).
+
+## Fix: Rematch leaving a menu over the match, and two matches at once
+- **What happened:**
+  - Rematch reloads the page, then starts the match once the roster has
+    loaded. The roster is ~5 MB, so that takes a few seconds on a phone.
+  - Until then the normal landing page was up, Play button included.
+    Tapping it opened the mode menu, and when the rematch started it
+    hid only the landing page. The menu stayed on top of the running
+    match.
+  - Starting a match from that menu built a second set of 22 players on
+    top of the first, so both played at once.
+- **Fixes:**
+  - While a reload is resuming something, the landing page says so
+    ("Starting the rematch…", "Back to the tournament…") and has no
+    Play button (`_showResumePending`). Play comes back if the roster
+    fails to load.
+  - Resuming hides every menu, not just the landing page (`_hideMenus`).
+  - `_startMatch` refuses to start while a match is running, and the mode
+    menu can't open over a live match.
+- Tests: `match-report.spec.js`, a rematch with a slow roster, plus a
+  second start and the menu mid-match.
+
 ## Merge with main: the offside freeze reaches the guest
 - The keeper/offside/stamina/technique-element work from #27 and the new
   portraits from #28 are merged into the multiplayer branch.

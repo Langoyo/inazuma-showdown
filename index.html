@@ -147,7 +147,13 @@
     #duel-vs {
       font-family: 'Silkscreen',monospace; font-size: 18px; color: var(--red);
       text-shadow: 2px 2px #000; flex: 0 0 auto;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
     }
+    /* element wheel (see GameScene._elementWheel): the winning arrow flows */
+    .el-wheel { display: block; flex: 0 0 auto; filter: drop-shadow(1px 1px 0 #000); }
+    .el-wheel .ew-arrow.hot { stroke-dasharray: 7 4; animation: ew-flow 0.6s linear infinite; }
+    @keyframes ew-flow { to { stroke-dashoffset: -11; } }
+    @media (prefers-reduced-motion: reduce) { .el-wheel .ew-arrow.hot { animation: none; } }
 
     #confrontation-ui {
       position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 20;
@@ -511,6 +517,7 @@
     .rating-hi  { background: var(--gold); }
     .rating-mid { background: #d8d8d8; }
     .rating-low { background: #b98a6a; }
+    #pitch-clear-btn.armed { font-size: 12px !important; padding: 6px 8px !important; }
     .el-badge { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
     .el-Fire  { color: #ff9b6a; }
     .el-Wood  { color: #8fe08a; }
@@ -812,12 +819,12 @@
            Touching the swatch is what turns it into a real override (see
            _syncTeamColorUI). -->
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-        <label style="font-size:12px;" for="my-team-color">Your team color:</label>
+        <label id="team-color-label" style="font-size:12px;" for="my-team-color">Your team color:</label>
         <input type="color" id="my-team-color" value="#3399ff" style="width:36px;height:28px;padding:0;border:2px solid #000;background:none;cursor:pointer;">
         <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">
           <input type="checkbox" id="my-team-color-auto" checked style="cursor:pointer;">Automatic
         </label>
-        <span class="info-icon" data-info-title="Your team color" data-info-body="The kit color your XI plays in on the pitch. Left on Automatic it follows whichever real team most of your starting XI belongs to, and the swatch shows you what that currently works out to — change your squad and it updates. Pick a color yourself and it overrides that until you tick Automatic again. Only affects your own side; a real connected opponent always picks their own color regardless.">ⓘ</span>
+        <span class="info-icon" data-info-title="Team colors" data-info-body="The kit color an XI plays in on the pitch — yours on the Me tab, the AI rival's on the Rival tab. Left on Automatic it follows whichever real team most of that starting XI belongs to, and the swatch shows you what that currently works out to — change the squad and it updates. Pick a color yourself and it overrides that until you tick Automatic again. If both sides end up too alike, the rival's is shifted so they can be told apart. A real connected opponent always picks their own color.">ⓘ</span>
       </div>
 
       <!-- The dice sits as a sibling overlay, not a child of #formation-pitch
@@ -830,6 +837,7 @@
           <!-- .slot-pin elements injected here by JS -->
         </div>
         <button id="pitch-randomize-btn" class="nes-btn is-primary is-compact" style="position:absolute;top:8px;right:8px;z-index:10;padding:4px 8px;font-size:16px;line-height:1;" title="Randomize your XI — a couple of star picks, the rest a surprise">🎲</button>
+        <button id="pitch-clear-btn" class="nes-btn is-error is-compact" style="position:absolute;top:8px;right:56px;z-index:10;padding:4px 8px;font-size:16px;line-height:1;" title="Clear the whole team (tap twice)">🗑</button>
       </div>
 
       <div style="font-size:11px;opacity:0.7;margin-bottom:4px;">Bench (<span id="bench-count">0</span>/5):</div>

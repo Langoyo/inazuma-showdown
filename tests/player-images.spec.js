@@ -133,17 +133,20 @@ test.describe('graceful fallback when a player has no portrait', () => {
   });
 });
 
-test.describe('live-match sprites are untouched', () => {
-  test('players on the pitch during a match are still plain coloured circles, not portraits', async ({ page }) => {
+test.describe('live-match sprites are pixel footballers, not portraits', () => {
+  test('players on the pitch are drawn as pixel footballers in their team colour, not as portrait images', async ({ page }) => {
     await waitForRosterLoaded(page);
     await startMatch(page);
-    const anyImageOnCanvas = await page.evaluate(() => {
+    const r = await page.evaluate(() => {
       const s = window.__scene;
-      // Every teamA/teamB entry's on-pitch representation is a Phaser
-      // Graphics circle (e.fx) — there is no texture/image object at all
-      // for it to have swapped to.
-      return s.teamA.every((e) => e.gfx && e.gfx.type === 'Arc') && s.teamB.every((e) => e.gfx && e.gfx.type === 'Arc');
+      const all = [...s.teamA, ...s.teamB];
+      return {
+        containers: all.every((e) => e.gfx && e.gfx.type === 'Container' && e.gfx.px),
+        layers: all.every((e) => e.gfx.px.base.texture.key.startsWith('px-pl-') && e.gfx.px.kit.texture.key === 'px-pl-kit' && e.gfx.px.hair.texture.key === 'px-pl-hair'),
+        // No portrait (player_images) texture is drawn on the pitch.
+        noPortraits: all.every((e) => e.gfx.list.every((c) => !String(c.texture?.key || '').includes('player_images'))),
+      };
     });
-    expect(anyImageOnCanvas).toBe(true);
+    expect(r).toEqual({ containers: true, layers: true, noPortraits: true });
   });
 });

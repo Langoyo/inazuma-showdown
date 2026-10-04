@@ -10,6 +10,8 @@ import { makeSeededKnockout, makeLeague, recordKnockoutResult, recordLeagueResul
 import TEAM_RENAMES from '../data/team-renames.json';
 import { STORY_RUNS, STORY_MIN_PLAYERS, getStoryRun, startStory, recordStoryResult, saveStory, loadStory, clearStory } from '../data/story.js';
 import { playKick, playPass, playGoal, playWhistle, playGkSave, isSfxEnabled, setSfxEnabled } from '../audio/sfx.js';
+import { ensurePixelTextures, TEX, ART_SCALE, RUN_CYCLE, BALL_FRAMES, shade } from '../gfx/pixelArt.js';
+import { hairColorFor, DEFAULT_HAIR } from '../gfx/hairColor.js';
 // ─── Constants ────────────────────────────────────────────────────────────
 // The logical field is big — the VIEWPORT (what the canvas shows) is smaller.
 // Scroll is handled by moving the Phaser camera over the world.
@@ -129,8 +131,7 @@ const BENCH_COVER       = ['GK','DF','MF','FW','MF']; // positions the auto-pick
 const HALF_S            = 3 * 60;
 const HALFTIME_PAUSE_MS = 3000; // how long play freezes for the half-time break
 const GOAL_PAUSE_MS     = 2500; // how long play freezes to show the goal banner
-const OFFSIDE_PAUSE_MS  = 1500; // play freezes after an offside while the attackers drop back
-const OFFSIDE_PUSHBACK  = 40;   // px onside of the ball the offside side's players restart from
+const OFFSIDE_PAUSE_MS  = 1500; // play freezes after an offside while the offside side drops back to its own half
 const AI_SUB_CHECK_MS   = 8000; // how often the AI reconsiders its own lineup
 const AI_SUB_STAMINA    = 0.35; // fraction of maxStamina below which a player becomes a sub candidate
 const AI_MAX_SUBS       = 3;    // matches the real substitution limit
@@ -150,7 +151,16 @@ const PREDICT_SNAP_DIST = 60;   // further off than this, pull harder:
 const PREDICT_SNAP_BLEND= 0.5;
 const CLIENT_BLEND      = 0.4;  // everything else follows the host's states
 const SCROLL_SPEED      = 340;   // px/s when a scroll button is held (was 220 — asked for faster)
-const WHEEL_LINE_PX     = 40;    // camera pan per wheel "line" when the browser counts lines, not pixels
+const FIT_ZOOM_MIN      = 0.4;   // landscape fit-to-width zoom limits (see _fitZoom)
+const FIT_ZOOM_MAX      = 3;
+const WHEEL_LINE_PX     = 40;
+// Pixel sprites (see gfx/pixelArt.js and _animatePlayers / _drawBall).
+const RUN_ANIM_MIN_SPEED  = 18;  // px/s: slower than this shows the idle frame
+const RUN_STRIDE_PX       = 9;   // px moved per run-cycle frame
+const RUN_FACING_DEADZONE = 12;  // px/s sideways before a player turns to face that way
+const BALL_ROLL_PX        = 5;   // px rolled per ball frame
+const NAME_DARK_TEXT_ABOVE = 0.6; // luminance (0-1) above which a team-colour name plate gets dark text
+const BALL_DRAW_DY        = 8;   // ball drawn this far below its physics position, at the sprites' feet    // camera pan per wheel "line" when the browser counts lines, not pixels
 
 // Physics forces — the ball carrier is only slightly sharper than everyone
 // else now; off-ball players used to crawl (AUTO_STEER_FORCE/MAX_SPEED were
@@ -274,6 +284,10 @@ const ELEMENT_EDGE  = 1.15; // power multiplier for the favourable side
 // Void is a technique element only (no player has it): it's shown, but it
 // beats nothing and nothing beats it.
 const ELEMENT_ICON  = { Fire:'🔥', Wood:'🌿', Air:'💨', Earth:'⛰️', Void:'◯' };
+// The games' element wheel, clockwise from the top: each beats the next
+// (Fire → Wood → Air → Earth → Fire), the same cycle as ELEMENT_BEATS.
+const ELEMENT_WHEEL = ['Fire','Wood','Air','Earth'];
+const ELEMENT_WHEEL_COLOR = { Fire:'#ff7a45', Wood:'#5fcf5a', Air:'#6cc8ff', Earth:'#e0b84a' };
 // How each element's supertechnique bursts (see _playTechniqueFx): embers
 // rising for Fire, leaves drifting for Wood, fast streaks for Air, chunks
 // thrown up and falling for Earth. Plain Phaser emitter config.
@@ -533,19 +547,24 @@ export default class GameScene extends Phaser.Scene {
     this.ball=this.matter.add.circle(this.FIELD_W/2,this.FIELD_H/2,10,
       {restitution:.7,frictionAir:BALL_FRICTION_AIR,label:'ball',
        collisionFilter:{category:CAT_BALL,mask:CAT_PLAYER|CAT_GOAL}});
-    this.ballGfx=this.add.circle(this.ball.position.x,this.ball.position.y,10,0xffffff).setDepth(3);
+    // A pixel ball (see gfx/pixelArt.js) whose frame rolls with the distance it
+    // travels, so it spins as it moves (see _drawBall).
+    this.ballGfx=this.add.image(this.ball.position.x,this.ball.position.y,TEX.ball,'b0').setScale(ART_SCALE).setDepth(5.9);
+    this._ballRoll=0; this._ballLast=null;
     // Sits on the ground under a ball in flight, so a chipped pass reads as
     // one rather than as a ball that ignored a defender.
-    this.ballShadow=this.add.ellipse(this.ball.position.x,this.ball.position.y,17,11,0x000000,0.38).setDepth(2).setVisible(false);
+    this.ballShadow=this.add.image(this.ball.position.x,this.ball.position.y,TEX.shadow).setScale(ART_SCALE*1.1).setDepth(2).setVisible(false);
     this.ballFlight=null;
     this._clientBall=null;
     this._drawGoals();
 
-    this.possRing=this.add.circle(0,0,20).setStrokeStyle(3,0xffd966).setFillStyle(0,0).setVisible(false).setDepth(4);
+    // The ball carrier's marker: a small gold pixel arrow bobbing over their head.
+    this.possRing=this.add.image(0,0,TEX.arrow).setScale(ART_SCALE).setTint(0xffd23f).setVisible(false).setDepth(7);
 
     // Camera setup: camera scrolls over the logical world
     this.cameras.main.setBounds(0,this.WORLD_Y_MIN,this.FIELD_W,this.WORLD_Y_MAX-this.WORLD_Y_MIN);
     this.cameras.main.setSize(this.VP_W,this.VP_H);
+    this.cameras.main.setZoom(this._fitZoom());
     this.cameras.main.scrollX=this.FIELD_W/2-this.VP_W/2;
     this.cameras.main.scrollY=this.FIELD_H/2-this.VP_H/2;
     this._clampScroll();
@@ -585,6 +604,8 @@ export default class GameScene extends Phaser.Scene {
     // (whichever real team most of the XI belongs to) for anyone who
     // never bothers with it, same as before this existed.
     this.myTeamColor=null;
+    // The same for the AI rival's kit, set from the Rival tab (solo only).
+    this.rivalTeamColor=null;
     // Rival-team state, only used solo vs AI — a real connected opponent
     // always picks their own squad regardless of what's set here.
     this.editSide='me';
@@ -652,7 +673,12 @@ export default class GameScene extends Phaser.Scene {
       data.forEach(p=>seen.set(p.name,(seen.get(p.name)||0)+1));
       this.duplicateNames=new Set([...seen].filter(([,n])=>n>1).map(([name])=>name));
       this._initSquadEditor();
-    }).catch(err=>{ document.getElementById('squad-pick-list').innerHTML=`<p style="color:#f88">Couldn't load roster.<br>${err.message}</p>`; });
+    }).catch(err=>{
+      document.getElementById('squad-pick-list').innerHTML=`<p style="color:#f88">Couldn't load roster.<br>${err.message}</p>`;
+      // Nothing can be resumed without it: give the landing page its Play button back.
+      document.getElementById('landing-resume-note')?.remove();
+      document.getElementById('landing-play-btn').style.display='';
+    });
 
     document.getElementById('confirm-squad-btn').addEventListener('click',()=>this._confirmSquad());
     this.matter.world.on('collisionstart',ev=>this._collisions(ev));
@@ -794,12 +820,37 @@ export default class GameScene extends Phaser.Scene {
       document.getElementById('tournament-panel').style.display='flex';
       this._renderTournamentPanel();
     });
+    this._showResumePending();
+  }
+  /** After a Rematch / back-to-tournament reload the roster takes a few
+   *  seconds to arrive (it's big; longer on a phone), and only then does
+   *  _consumeResume start the match. Until it does, the landing page says
+   *  what's coming instead of offering Play — tapping Play there used to
+   *  open the menus, which then sat on top of the rematch once it started. */
+  _showResumePending(){
+    let resume=null;
+    try{ resume=JSON.parse(sessionStorage.getItem(RESUME_KEY)||'null'); }catch{ return; }
+    if(!resume?.kind) return;
+    document.getElementById('landing-play-btn').style.display='none';
+    const note=document.createElement('p');
+    note.id='landing-resume-note';
+    note.textContent=resume.kind==='rematch'?'Starting the rematch…':resume.kind==='story'?'Back to the story…':'Back to the tournament…';
+    document.getElementById('landing-panel').appendChild(note);
+  }
+  /** Every menu screen, so whatever a reload resumes into (a rematch, the
+   *  bracket) isn't drawn underneath one that's still up. */
+  _hideMenus(){
+    for(const id of ['landing-panel','mode-select-panel','mode-multi-panel','squad-editor-panel','tournament-panel','story-panel'])
+      document.getElementById(id).style.display='none';
+    document.getElementById('landing-resume-note')?.remove();
+    document.getElementById('landing-play-btn').style.display='';
   }
 
   /** Shared landing point for "Play" and for backing out of the tournament
    *  setup screen — also keeps the Tournament button's label honest about
    *  whether it's starting fresh or resuming what's already running. */
   _showModeSelect(){
+    if(this.matchStarted){ this._hideMenus(); return; } // never a menu over a live match
     document.getElementById('landing-panel').style.display='none';
     document.getElementById('tournament-panel').style.display='none';
     document.getElementById('story-panel').style.display='none';
@@ -859,33 +910,20 @@ export default class GameScene extends Phaser.Scene {
   // ════════════════════════════════════════════════════════════════════
   _drawField(){
     const w=this.FIELD_W, h=this.FIELD_H;
-    // Surround: the darker apron behind each goal, so the run-off reads as part
-    // of the ground rather than as empty space off the edge of the world.
-    this.add.rectangle(w/2,(this.WORLD_Y_MIN+this.WORLD_Y_MAX)/2,w,this.WORLD_Y_MAX-this.WORLD_Y_MIN,0x11512a).setDepth(-1);
-    // Full field background
-    this.add.rectangle(w/2,h/2,w,h,0x1e7a3c).setStrokeStyle(5,0xffffff).setDepth(0);
-    // Halfway line
-    this.add.rectangle(w/2,h/2,w,2,0xffffff).setAlpha(0.5).setDepth(1);
-    // Centre circle
-    this.add.circle(w/2,h/2,60).setStrokeStyle(2,0xffffff,0.5).setFillStyle(0,0).setDepth(1);
-    // Penalty areas
     const paW=w*0.5, paH=h*0.12;
     this.PA_W=paW; this.PA_H=paH; // kept for foul → penalty-vs-free-kick checks
-    this.add.rectangle(w/2,paH/2,paW,paH).setStrokeStyle(2,0xffffff,0.5).setFillStyle(0,0).setDepth(1);
-    this.add.rectangle(w/2,h-paH/2,paW,paH).setStrokeStyle(2,0xffffff,0.5).setFillStyle(0,0).setDepth(1);
+    // Every texture the match draws with is painted here, once: the pitch
+    // (stripes, markings, goal nets, the darker run-off behind each goal),
+    // the footballers, the ball and the markers — see gfx/pixelArt.js.
+    ensurePixelTextures(this,{fieldW:w,fieldH:h,runoff:GOAL_RUNOFF,goalHalfWidth:GOAL_HALF_WIDTH,goalDepth:GOAL_DEPTH,paW,paH});
+    this.add.image(0,this.WORLD_Y_MIN,TEX.pitch).setOrigin(0,0).setScale(ART_SCALE).setDepth(-1);
   }
 
   _drawGoals(){
     const w=this.FIELD_W, h=this.FIELD_H;
-    // Visual: a box reaching back from the goal line into the run-off. Tapping
-    // a line was fiddly — anywhere in the box counts as "shoot here".
-    const box=(lineY,dir)=>{
-      const cy=lineY+dir*GOAL_DEPTH/2;
-      this.add.rectangle(w/2,cy,GOAL_HALF_WIDTH*2,GOAL_DEPTH,0xffffff,0.16).setStrokeStyle(4,0xffffff,0.9).setDepth(2);
-      for(let i=1;i<4;i++) this.add.rectangle(w/2-GOAL_HALF_WIDTH+i*(GOAL_HALF_WIDTH/2),cy,1,GOAL_DEPTH,0xffffff).setAlpha(0.28).setDepth(2);
-      this.add.rectangle(w/2,lineY,GOAL_HALF_WIDTH*2,6,0xffffff).setDepth(2);
-    };
-    box(0,-1); box(h,1);
+    // The nets themselves are part of the pitch image (see _drawField): a box
+    // reaching back from the goal line into the run-off. Tapping a line was
+    // fiddly — anywhere in the box counts as "shoot here".
     // Physics sensors
     this.goalMin=this.matter.add.rectangle(w/2,0,GOAL_HALF_WIDTH*2,16,{isSensor:true,isStatic:true,label:'goalMin',collisionFilter:{category:CAT_GOAL,mask:CAT_BALL}});
     this.goalMax=this.matter.add.rectangle(w/2,h,GOAL_HALF_WIDTH*2,16,{isSensor:true,isStatic:true,label:'goalMax',collisionFilter:{category:CAT_GOAL,mask:CAT_BALL}});
@@ -989,17 +1027,49 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _onResize(gameSize){
+    const cam=this.cameras.main;
+    // Keep looking at the same spot of the pitch through a rotation or a
+    // window resize (the camera's centre, not its corner, is what matters).
+    const cx=cam.scrollX+this.VP_W/2, cy=cam.scrollY+this.VP_H/2;
     this.VP_W=gameSize.width; this.VP_H=gameSize.height;
-    this.cameras.main.setSize(this.VP_W,this.VP_H);
+    cam.setSize(this.VP_W,this.VP_H);
+    cam.setZoom(this._fitZoom());
+    cam.scrollX=cx-this.VP_W/2; cam.scrollY=cy-this.VP_H/2;
     this._clampScroll();
+  }
+
+  /** Camera zoom for the current screen. On a touch device (phone, tablet)
+   *  turned to landscape the pitch is scaled to the width of the device, so
+   *  it shows the whole width and fills a wide screen instead of leaving
+   *  bars. Everywhere else — portrait, and any desktop window — it stays
+   *  1:1 and scrolls sideways when it's narrower than the pitch, as it
+   *  always has. */
+  _fitZoom(){
+    if(this.VP_W<=this.VP_H||!this._coarsePointer()) return 1;
+    return Phaser.Math.Clamp(this.VP_W/this.FIELD_W,FIT_ZOOM_MIN,FIT_ZOOM_MAX);
+  }
+  /** A touch screen is the main pointer (phones, tablets), not a mouse. */
+  _coarsePointer(){ return !!window.matchMedia?.('(pointer: coarse)').matches; }
+
+  /** Where the camera's scroll may go. Phaser's zoom is about the camera
+   *  centre, so at zoom z the view is VP/z world units and the scroll range
+   *  shifts by half the difference — the same maths as Phaser's own bounds
+   *  clamp, which at zoom 1 reduces to [0, FIELD_W-VP_W] x [Y_MIN, Y_MAX-VP_H]. */
+  _scrollLimits(){
+    const z=this.cameras.main.zoom||1, dw=this.VP_W/z, dh=this.VP_H/z;
+    const minX=(dw-this.VP_W)/2, minY=this.WORLD_Y_MIN+(dh-this.VP_H)/2;
+    return {
+      minX, maxX:Math.max(minX,minX+this.FIELD_W-dw),
+      minY, maxY:Math.max(minY,minY+(this.WORLD_Y_MAX-this.WORLD_Y_MIN)-dh)
+    };
   }
 
   /** Keeps the camera inside the world, which now reaches past both goal lines
    *  by GOAL_RUNOFF so the goals can be centred on screen. */
   _clampScroll(){
-    const cam=this.cameras.main;
-    cam.scrollX=Phaser.Math.Clamp(cam.scrollX,0,Math.max(0,this.FIELD_W-this.VP_W));
-    cam.scrollY=Phaser.Math.Clamp(cam.scrollY,this.WORLD_Y_MIN,Math.max(this.WORLD_Y_MIN,this.WORLD_Y_MAX-this.VP_H));
+    const cam=this.cameras.main, l=this._scrollLimits();
+    cam.scrollX=Phaser.Math.Clamp(cam.scrollX,l.minX,l.maxX);
+    cam.scrollY=Phaser.Math.Clamp(cam.scrollY,l.minY,l.maxY);
   }
 
   /** Smoothly pans the camera back to the centre of the pitch — used after a
@@ -1007,15 +1077,15 @@ export default class GameScene extends Phaser.Scene {
    *  it) could be anywhere near either goal line when it goes in, well off
    *  from the centre-spot restart everyone lines up for next. */
   _centerCameraOnField(durationMs=700){
-    const cam=this.cameras.main;
-    const targetX=Phaser.Math.Clamp(this.FIELD_W/2-this.VP_W/2,0,Math.max(0,this.FIELD_W-this.VP_W));
-    const targetY=Phaser.Math.Clamp(this.FIELD_H/2-this.VP_H/2,this.WORLD_Y_MIN,Math.max(this.WORLD_Y_MIN,this.WORLD_Y_MAX-this.VP_H));
+    const cam=this.cameras.main, l=this._scrollLimits();
+    const targetX=Phaser.Math.Clamp(this.FIELD_W/2-this.VP_W/2,l.minX,l.maxX);
+    const targetY=Phaser.Math.Clamp(this.FIELD_H/2-this.VP_H/2,l.minY,l.maxY);
     this.tweens.add({targets:cam,scrollX:targetX,scrollY:targetY,duration:durationMs,ease:'Cubic.Out'});
   }
 
   _tickScroll(delta){
     const cam=this.cameras.main;
-    const spd=SCROLL_SPEED*(delta/1000);
+    const spd=SCROLL_SPEED*(delta/1000)/(cam.zoom||1); // a screen speed: zoomed in, fewer world units
     const kx=(this.scrollKeys.left?-1:0)+(this.scrollKeys.right?1:0);
     const ky=(this.scrollKeys.up?-1:0)+(this.scrollKeys.down?1:0);
     const vx=Phaser.Math.Clamp(kx+this.joyVec.x,-1,1);
@@ -1034,15 +1104,18 @@ export default class GameScene extends Phaser.Scene {
     if(ev?.shiftKey&&!dx){ dx=dy; dy=0; }
     const cam=this.cameras.main;
     this.tweens.killTweensOf(cam); // don't fight a post-goal recentre
-    cam.scrollX+=dx*unit; cam.scrollY+=dy*unit;
+    const z=cam.zoom||1;
+    cam.scrollX+=dx*unit/z; cam.scrollY+=dy*unit/z;
     this._clampScroll();
     ev?.preventDefault?.();
   }
 
-  /** Convert screen (pointer) coords to world coords accounting for camera. */
+  /** Convert screen (pointer) coords to world coords accounting for camera:
+   *  the camera's centre stays put under zoom, so offsets from the screen
+   *  centre are divided by it. */
   _toWorld(x,y){
-    const cam=this.cameras.main;
-    return {x:x+cam.scrollX, y:y+cam.scrollY};
+    const cam=this.cameras.main, z=cam.zoom||1;
+    return {x:cam.scrollX+this.VP_W/2+(x-this.VP_W/2)/z, y:cam.scrollY+this.VP_H/2+(y-this.VP_H/2)/z};
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -1082,21 +1155,28 @@ export default class GameScene extends Phaser.Scene {
     const top=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
     return top?hexToInt(top[0]):fallback;
   }
-  /** Keeps the "Your team color" controls honest about which mode they're
-   *  in. A native colour input can't be blank, so while nothing has been
-   *  picked (`myTeamColor` null) the swatch previews what the automatic
-   *  pick currently works out to for your XI rather than showing some
-   *  fixed value that reads as a choice you made — change the squad and it
-   *  follows. Always your own XI, whichever side the pitch is showing,
-   *  since that's all this setting ever affects. */
+  /** Keeps the team color controls honest about which mode they're in. A
+   *  native colour input can't be blank, so while nothing has been picked
+   *  (the color is null) the swatch previews what the automatic pick
+   *  currently works out to for that XI rather than showing some fixed
+   *  value that reads as a choice you made — change the squad and it
+   *  follows. It follows the Me/Rival tab: on the Rival tab it sets the AI
+   *  rival's kit (`rivalTeamColor`), otherwise yours (`myTeamColor`). */
   _syncTeamColorUI(){
     const swatch=document.getElementById('my-team-color');
     const auto=document.getElementById('my-team-color-auto');
     if(!swatch||!auto) return;
-    auto.checked=this.myTeamColor==null;
-    if(this.myTeamColor==null) swatch.value=this._css3(this._squadColor(this.squadSlots.filter(Boolean),0x3399ff));
-    else swatch.value=this.myTeamColor;
+    const rival=this.editSide==='rival';
+    const label=document.getElementById('team-color-label');
+    if(label) label.textContent=rival?'Rival team color:':'Your team color:';
+    const picked=this._edColor();
+    auto.checked=picked==null;
+    if(picked==null) swatch.value=this._css3(this._squadColor(this._edSlots().filter(Boolean),rival?0xff4444:0x3399ff));
+    else swatch.value=picked;
   }
+  /** The picked kit color of whichever side the editor is showing (null = automatic). */
+  _edColor(){ return this.editSide==='rival'?this.rivalTeamColor:this.myTeamColor; }
+  _edSetColor(v){ if(this.editSide==='rival') this.rivalTeamColor=v; else this.myTeamColor=v; }
   /** A squad payload's kit color: whatever that player explicitly picked
    *  (payload.color, from the "Your team color" selector), or the usual
    *  auto-derived one if they never touched it — same fallback chain
@@ -1115,6 +1195,7 @@ export default class GameScene extends Phaser.Scene {
       this._edSetFormation(e.target.value); this._renderPitch();
     });
     document.getElementById('pitch-randomize-btn').addEventListener('click',()=>this._randomize());
+    document.getElementById('pitch-clear-btn').addEventListener('click',()=>this._clearTeamTap());
     document.getElementById('squad-whole-team-btn').addEventListener('click',()=>this._useWholeTeam());
     document.getElementById('squad-search').addEventListener('input',()=>this._renderPickListReset());
     this._combos=[
@@ -1145,12 +1226,12 @@ export default class GameScene extends Phaser.Scene {
     // Touching the swatch is what makes the colour an explicit override —
     // until then it's only previewing what Automatic works out to.
     document.getElementById('my-team-color').addEventListener('input',e=>{
-      this.myTeamColor=e.target.value; this._syncTeamColorUI();
+      this._edSetColor(e.target.value); this._syncTeamColorUI();
     });
     document.getElementById('my-team-color-auto').addEventListener('change',e=>{
       // Unticking keeps whatever is on screen, so the colour doesn't jump
       // the moment you take manual control of it.
-      this.myTeamColor=e.target.checked?null:document.getElementById('my-team-color').value;
+      this._edSetColor(e.target.checked?null:document.getElementById('my-team-color').value);
       this._syncTeamColorUI();
     });
     document.getElementById('half-length-select').addEventListener('change',e=>{
@@ -1554,6 +1635,7 @@ export default class GameScene extends Phaser.Scene {
     document.querySelectorAll('#squad-side-tabs .squad-side-tab').forEach(b=>b.classList.toggle('is-primary',b.dataset.side===side));
     this._squadSel=null;
     this._renderPitch(); this._renderPickList();
+    this._syncTeamColorUI();
   }
 
   /** Fills in any slot the rival XI is still missing at confirm time (e.g.
@@ -1571,7 +1653,7 @@ export default class GameScene extends Phaser.Scene {
       const takeAny=()=>{ for(const l of Object.values(byPos)) if(l.length) return l.pop().id; return null; };
       for(let i=0;i<slots.length;i++) if(!slots[i]) slots[i]=take(roles[i])||takeAny();
     }
-    return {starterIds:slots.filter(Boolean),benchIds:[...this.rivalBenchIds],formation:this.rivalFormation,name:this._rivalName||'Rival'};
+    return {starterIds:slots.filter(Boolean),benchIds:[...this.rivalBenchIds],formation:this.rivalFormation,color:this.rivalTeamColor,name:this._rivalName||'Rival'};
   }
   /** The name shown beside your goals on the scoreboard: the squad editor's
    *  team-name field, falling back to the profile's player name. */
@@ -1700,6 +1782,30 @@ export default class GameScene extends Phaser.Scene {
   _elBadge(el,withName=true){
     if(!el) return '';
     return `<span class="el-badge el-${el}">${ELEMENT_ICON[el]||''}${withName?' '+el:''}</span>`;
+  }
+  /** A small element wheel (SVG): the four elements round a circle with an
+   *  arrow from each to the one it beats. The two elements facing off are
+   *  ringed in their team's colour (the rest dimmed), and when one beats the
+   *  other that arrow glows. Void or an unknown element just isn't ringed. */
+  _elementWheel(elA,elB,colA,colB,size=64){
+    const C=50, R=33, pos=i=>{ const a=-Math.PI/2+i*Math.PI/2; return [C+R*Math.cos(a),C+R*Math.sin(a)]; };
+    const hot=ELEMENT_BEATS[elA]===elB?elA:ELEMENT_BEATS[elB]===elA?elB:null;
+    const uid=`ew${(this._wheelSeq=(this._wheelSeq||0)+1)}`;
+    const arrows=ELEMENT_WHEEL.map((el,i)=>{
+      // A quarter arc between neighbours, trimmed so it clears both nodes.
+      const a0=-Math.PI/2+i*Math.PI/2+0.42, a1=a0+Math.PI/2-0.84;
+      const [x0,y0]=[C+R*Math.cos(a0),C+R*Math.sin(a0)], [x1,y1]=[C+R*Math.cos(a1),C+R*Math.sin(a1)];
+      const on=el===hot;
+      return `<path class="ew-arrow${on?' hot':''}" d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${R} ${R} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}" fill="none" stroke="${on?'#ffd23f':'#fff'}" stroke-opacity="${on?1:hot?0.25:0.55}" stroke-width="${on?4:2.5}" marker-end="url(#${uid}${on?'h':'n'})"/>`;
+    }).join('');
+    const nodes=ELEMENT_WHEEL.map((el,i)=>{
+      const [x,y]=pos(i), inA=el===elA, inB=el===elB, dim=(elA||elB)&&!inA&&!inB;
+      const rings=(inA?`<circle cx="${x}" cy="${y}" r="15.5" fill="none" stroke="${colA||'#fff'}" stroke-width="3.5"/>`:'')
+        +(inB?`<circle cx="${x}" cy="${y}" r="${inA?19.5:15.5}" fill="none" stroke="${colB||'#fff'}" stroke-width="3.5"/>`:'');
+      return `<g class="ew-node" data-el="${el}" opacity="${dim?0.4:1}"><circle cx="${x}" cy="${y}" r="12" fill="${ELEMENT_WHEEL_COLOR[el]}" stroke="#000" stroke-width="2"/>${rings}<text x="${x}" y="${y+4.5}" font-size="12" text-anchor="middle">${ELEMENT_ICON[el]}</text></g>`;
+    }).join('');
+    const marker=(id,col)=>`<marker id="${id}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${col}"/></marker>`;
+    return `<svg class="el-wheel" width="${size}" height="${size}" viewBox="0 0 100 100" role="img" aria-label="Element wheel: Fire beats Wood beats Air beats Earth beats Fire"><defs>${marker(uid+'n','#fff')}${marker(uid+'h','#ffd23f')}</defs><circle cx="50" cy="50" r="48" fill="#1b1b2e" stroke="#000" stroke-width="3"/>${arrows}${nodes}</svg>`;
   }
   /** Overall rating chip for a pitch/bench pin — banded by strength so a
    *  squad's weak spots stand out without reading each number.
@@ -2276,6 +2382,27 @@ export default class GameScene extends Phaser.Scene {
    *  in an otherwise unpredictable squad. A star pool with nobody left for a
    *  role falls back to an ordinary pick, and _fillSquadByPosition-style
    *  backfill means a thin position never leaves a slot empty. */
+  /** 🗑 beside the dice: empties the XI and the bench of whichever side the
+   *  editor shows. Two taps — the first arms it ("Clear?") for a few
+   *  seconds — so a stray tap can't throw away a team you've built. */
+  _clearTeamTap(){
+    const btn=document.getElementById('pitch-clear-btn');
+    if(!this._clearArmed){
+      this._clearArmed=true; btn.textContent='Clear?'; btn.classList.add('armed');
+      this._clearDisarm=setTimeout(()=>this._disarmClear(),3000);
+      return;
+    }
+    this._disarmClear();
+    this._edSetSlots(Array(TEAM_SIZE).fill(null));
+    this._edSetBench(new Set());
+    this._squadSel=null; this._pickPosFilter=null;
+    this._renderPitch(); this._renderPickList();
+  }
+  _disarmClear(){
+    clearTimeout(this._clearDisarm); this._clearArmed=false;
+    const btn=document.getElementById('pitch-clear-btn');
+    btn.textContent='🗑'; btn.classList.remove('armed');
+  }
   _randomize(){
     // Shape first, then fill it position by position — the slot roles depend
     // on the formation, so picking it afterwards would mismatch them.
@@ -2715,7 +2842,7 @@ export default class GameScene extends Phaser.Scene {
       const body=withPhysics?this.matter.add.circle(pos.x,pos.y,12,{frictionAir:.16,label:`${role}${slot}`,
         collisionFilter:{category:CAT_PLAYER,mask:CAT_BALL|CAT_DEFAULT}}):null;
       if(body) this.bodyOwner.set(body,{role,id});
-      const gfx=this.add.circle(pos.x,pos.y,12,tColor).setDepth(5);
+      const gfx=this._makePlayerSprite(pos.x,pos.y,id===this._findGkId(starterIds));
       // A dark plate behind the name rather than an outline or a shadow on
       // bare glyphs. 9px white text with a soft shadow was legible in
       // isolation but not over a pitch: thin light strokes on mid-green is
@@ -2729,7 +2856,9 @@ export default class GameScene extends Phaser.Scene {
         {fontSize:'12px',fontFamily:'"Pixelify Sans", monospace',fontStyle:'bold',
          color:'#fff',backgroundColor:'rgba(0,0,0,0.55)',padding:{x:3,y:1},resolution:3})
         .setOrigin(.5,0).setDepth(6);
-      team.push({id,body,gfx,label,slot,wanderPhase:Math.random()*Math.PI*2});
+      const entry={id,body,gfx,label,slot,wanderPhase:Math.random()*Math.PI*2};
+      team.push(entry);
+      this._paintPlayer(entry,tColor); this._applyHair(entry);
       const st=createPlayerStats(); applyRosterPlayerToStats(st,rp); map.set(id,st);
     });
     return team;
@@ -2750,9 +2879,76 @@ export default class GameScene extends Phaser.Scene {
   _relabelEntry(e){
     const p=getPlayerById(e.id);
     if(p&&e.label) e.label.setText(p.nickname||p.name);
+    if(e.gfx?.px) this._applyHair(e); // the newcomer's own hair, too
+  }
+
+  // ---- pixel footballers (textures: gfx/pixelArt.js) ----------------------
+  /** A footballer: shadow, the active-player ring under the feet, and the
+   *  base / kit / hair layers (kit and hair are white, tinted per team and
+   *  per player). A Container, so x/y/setPosition/setVisible work as they
+   *  did on the old circle; e.gfx.px holds the parts. */
+  _makePlayerSprite(x,y,keeper){
+    const feet=12, img=(key,frame)=>this.add.image(0,feet,key,frame).setOrigin(0.5,1).setScale(ART_SCALE);
+    const shadow=this.add.image(0,feet,TEX.shadow).setScale(ART_SCALE);
+    const ring=this.add.image(0,feet,TEX.ellipse).setScale(ART_SCALE).setVisible(false);
+    const base=img(keeper?TEX.plKeeper:TEX.plBase,'idle'), kit=img(TEX.plKit,'idle'), hair=img(TEX.plHair,'idle').setTint(DEFAULT_HAIR);
+    const c=this.add.container(x,y,[shadow,ring,base,kit,hair]).setDepth(5);
+    c.px={base,kit,hair,ring,keeper,frame:'idle',facing:1,phase:0,vx:0,lastX:x,lastY:y};
+    return c;
+  }
+  /** Kit colour (darker for keepers), greyed while stunned; the white ring
+   *  under the player each side is steering. */
+  _paintPlayer(e,color,{stunned=false,active=false,keeper=null}={}){
+    const px=e.gfx?.px; if(!px) return;
+    // Gloves on whoever is in goal now (a substitution can change that).
+    if(keeper!=null&&keeper!==px.keeper){ px.keeper=keeper; px.base.setTexture(keeper?TEX.plKeeper:TEX.plBase,px.frame); px.kitTint=null; }
+    const kit=stunned?0x8a8a8a:(px.keeper?shade(color,0.35):color);
+    if(px.kitTint!==kit){ px.kit.setTint(kit); px.kitTint=kit; }
+    e.gfx.setAlpha(stunned?0.8:1);
+    px.ring.setVisible(active);
+    // The name plate wears the team colour too (not greyed when stunned), with
+    // white or dark text, whichever reads better on it.
+    if(e.label&&px.plateColor!==color){
+      px.plateColor=color;
+      const r=(color>>16)&255, g=(color>>8)&255, b=color&255;
+      const light=(0.299*r+0.587*g+0.114*b)/255>NAME_DARK_TEXT_ABOVE;
+      e.label.setBackgroundColor(`rgba(${r},${g},${b},0.92)`).setColor(light?'#14142b':'#ffffff');
+    }
+  }
+  /** Tints the hair from the player's portrait once it has been sampled
+   *  (see gfx/hairColor.js); still the same player by then, or it's skipped. */
+  _applyHair(e){
+    const id=e.id, p=getPlayerById(id); if(!e.gfx?.px) return;
+    hairColorFor(p).then(col=>{ if(e.id===id&&e.gfx?.px){ e.gfx.px.hair.setTint(col); e.gfx.px.hairTint=col; } });
+  }
+  /** Run cycle and facing, from how far each sprite actually moved since the
+   *  last frame — so the guest animates from the synced positions just like
+   *  the host does from physics. Nearly still: the idle frame. */
+  _animatePlayers(){
+    const dt=Math.max(1,this.game.loop.delta)/1000;
+    for(const e of [...this.teamA,...this.teamB]){
+      const px=e.gfx?.px; if(!px) continue;
+      const dx=e.gfx.x-px.lastX, dy=e.gfx.y-px.lastY;
+      px.lastX=e.gfx.x; px.lastY=e.gfx.y;
+      const speed=Math.hypot(dx,dy)/dt;
+      px.vx=Phaser.Math.Linear(px.vx,dx/dt,0.25);
+      if(px.vx>RUN_FACING_DEADZONE) px.facing=1; else if(px.vx<-RUN_FACING_DEADZONE) px.facing=-1;
+      let frame='idle';
+      if(speed>RUN_ANIM_MIN_SPEED){
+        px.phase=(px.phase+speed*dt/RUN_STRIDE_PX)%RUN_CYCLE.length;
+        frame=RUN_CYCLE[Math.floor(px.phase)];
+      } else px.phase=0;
+      if(frame!==px.frame){ px.base.setFrame(frame); px.kit.setFrame(frame); px.hair.setFrame(frame); px.frame=frame; }
+      if(e.gfx.scaleX!==px.facing) e.gfx.scaleX=px.facing;
+      // Lower on the pitch is drawn in front.
+      e.gfx.setDepth(5+e.gfx.y*0.00001);
+    }
   }
 
   _startMatch(payloadA,payloadB){
+    // One match per page: a second start would build another 22 bodies on
+    // top of the running ones and both would play at once.
+    if(this.matchStarted){ console.warn('[match] already running; ignoring a second start'); return; }
     if(this._squadRetryTimer){ clearInterval(this._squadRetryTimer); this._squadRetryTimer=null; }
     this.formation.A=payloadA.formation||DEFAULT_FORMATION;
     this.formation.B=payloadB.formation||DEFAULT_FORMATION;
@@ -3423,14 +3619,12 @@ export default class GameScene extends Phaser.Scene {
       // something the player drew — showing it as a line reads as a second,
       // self-drawn path. Just a small marker at where they're headed instead.
       if(this.autoPathIds.has(e.id)){
-        this.pathGfx.fillStyle(0xffe066,.6); this.pathGfx.fillCircle(last.x,last.y,4);
+        this._pxDisc(this.pathGfx,last.x,last.y,4,0xffe066,.6);
         return;
       }
       const pos=e.body?e.body.position:e.gfx;
-      this.pathGfx.lineStyle(2,0xffe066,.85);
-      this.pathGfx.beginPath(); this.pathGfx.moveTo(pos.x,pos.y);
-      path.forEach(pt=>this.pathGfx.lineTo(pt.x,pt.y)); this.pathGfx.strokePath();
-      this.pathGfx.fillStyle(0xffe066,1); this.pathGfx.fillCircle(last.x,last.y,5);
+      this._pxLine(this.pathGfx,[pos,...path],0xffe066,.85);
+      this._pxDisc(this.pathGfx,last.x,last.y,5,0xffe066,1);
     });
     // Tap-to-pass feedback: a blue ring at the spot tapped, fading out over
     // PASS_MARKER_MS rather than just vanishing — the ball's already on its
@@ -3440,10 +3634,8 @@ export default class GameScene extends Phaser.Scene {
       if(remain<=0) this.passMarker=null;
       else {
         const t=remain/PASS_MARKER_MS;
-        this.pathGfx.lineStyle(3,0x3399ff,t);
-        this.pathGfx.strokeCircle(this.passMarker.x,this.passMarker.y,10+(1-t)*10);
-        this.pathGfx.fillStyle(0x3399ff,t*0.5);
-        this.pathGfx.fillCircle(this.passMarker.x,this.passMarker.y,5);
+        this._pxCircle(this.pathGfx,this.passMarker.x,this.passMarker.y,10+(1-t)*10,0x3399ff,t);
+        this._pxDisc(this.pathGfx,this.passMarker.x,this.passMarker.y,5,0x3399ff,t*0.5);
       }
     }
     this._drawShotPreview();
@@ -3470,12 +3662,41 @@ export default class GameScene extends Phaser.Scene {
     const reachColor=reach>0.66?0xff4d4d:reach>0.33?0xffb84d:0x5dff7a;
     g.fillStyle(0xffffff,0.16);
     g.fillTriangle(from.x,from.y,to.x-SHOT_CONE_HALF,to.y,to.x+SHOT_CONE_HALF,to.y);
-    g.lineStyle(1.5,0xffffff,0.7);
-    g.strokeTriangle(from.x,from.y,to.x-SHOT_CONE_HALF,to.y,to.x+SHOT_CONE_HALF,to.y);
-    g.lineStyle(3,reachColor,1); g.strokeCircle(to.x,to.y,8);
-    if(path.blocker){ const p=this._posOf(path.blocker.entry); g.lineStyle(3,0xff4d4d,1); g.strokeCircle(p.x,p.y,19); }
-    if(path.chainer){ const p=this._posOf(path.chainer.entry); g.lineStyle(3,0xffd23f,path.chainer.canChain?1:0.35); g.strokeCircle(p.x,p.y,19); }
-    if(path.keeper){ const p=this._posOf(path.keeper.entry); g.lineStyle(3,reachColor,0.9); g.strokeCircle(p.x,p.y,19); }
+    const l={x:to.x-SHOT_CONE_HALF,y:to.y}, r={x:to.x+SHOT_CONE_HALF,y:to.y};
+    this._pxLine(g,[from,l,r,from],0xffffff,0.7,{dash:6,size:2});
+    this._pxCircle(g,to.x,to.y,8,reachColor,1);
+    if(path.blocker){ const p=this._posOf(path.blocker.entry); this._pxCircle(g,p.x,p.y,19,0xff4d4d,1); }
+    if(path.chainer){ const p=this._posOf(path.chainer.entry); this._pxCircle(g,p.x,p.y,19,0xffd23f,path.chainer.canChain?1:0.35); }
+    if(path.keeper){ const p=this._posOf(path.keeper.entry); this._pxCircle(g,p.x,p.y,19,reachColor,0.9); }
+  }
+
+  // ---- pixel drawing on a Graphics, snapped to the art-pixel grid ----------
+  /** A dotted trail of squares along the polyline `pts`. */
+  _pxLine(g,pts,color,alpha,{dash=8,size=4}={}){
+    const P=ART_SCALE; g.fillStyle(color,alpha);
+    let carry=0;
+    for(let i=1;i<pts.length;i++){
+      const a=pts[i-1], b=pts[i], len=Math.hypot(b.x-a.x,b.y-a.y); if(!len) continue;
+      for(let d=carry; d<len; d+=dash){
+        const x=a.x+(b.x-a.x)*d/len, y=a.y+(b.y-a.y)*d/len;
+        g.fillRect(Math.round((x-size/2)/P)*P,Math.round((y-size/2)/P)*P,size,size);
+      }
+      carry=(carry-len)%dash; if(carry<0) carry+=dash;
+    }
+  }
+  /** A ring two art pixels thick, built from grid squares. */
+  _pxCircle(g,cx,cy,r,color,alpha){
+    const P=ART_SCALE, seen=new Set(); g.fillStyle(color,alpha);
+    for(const rr of [r,r-P]) for(let a=0;a<Math.PI*2;a+=P/(rr*2||1)){
+      const x=Math.round((cx+rr*Math.cos(a))/P)*P, y=Math.round((cy+rr*Math.sin(a))/P)*P, k=x+','+y;
+      if(seen.has(k)) continue; seen.add(k); g.fillRect(x-P/2,y-P/2,P,P);
+    }
+  }
+  /** A filled disc made of grid squares. */
+  _pxDisc(g,cx,cy,r,color,alpha){
+    const P=ART_SCALE; g.fillStyle(color,alpha);
+    const x0=Math.round(cx/P)*P, y0=Math.round(cy/P)*P;
+    for(let y=-r;y<=r;y+=P) for(let x=-r;x<=r;x+=P) if(x*x+y*y<=r*r) g.fillRect(x0+x-P/2,y0+y-P/2,P,P);
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -3593,15 +3814,20 @@ export default class GameScene extends Phaser.Scene {
     const defendingRole=offsideRole==='A'?'B':'A';
     const spot={x:this.ball.position.x,y:this.ball.position.y};
     this._placeBallAndAward(defendingRole,spot,now);
-    // Everyone on the offside side who's ahead of the ball restarts from
-    // behind it (OFFSIDE_PUSHBACK onside of it), keeping their lane.
-    const ballDist=this._distToGoal(spot.y,offsideRole);
+    // The offside side goes back to its own half for the free kick: anyone
+    // still in the rival's half is sent to their formation spot on their own
+    // side of the halfway line (the kickoff layout, which keeps the team's
+    // shape, and drops off the line since the other side has the ball now).
+    // Players already in their own half, and the keeper, stay where they are.
     const team=offsideRole==='A'?this.teamA:this.teamB;
+    const half=this.FIELD_H/2;
     for(const e of team){
       if(e.slot===0||!e.body||this._isOut(offsideRole,e.id)) continue;
-      if(this._distToGoal(e.body.position.y,offsideRole)>=ballDist+OFFSIDE_PUSHBACK) continue;
-      const y=offsideRole==='A'?spot.y+OFFSIDE_PUSHBACK:spot.y-OFFSIDE_PUSHBACK;
-      this.matter.body.setPosition(e.body,{x:e.body.position.x,y:Phaser.Math.Clamp(y,20,this.FIELD_H-20)});
+      const y=e.body.position.y;
+      // A defends the bottom of the map (attacks toward y=0); B the top.
+      const inOwnHalf=offsideRole==='A'?y>=half:y<=half;
+      if(inOwnHalf) continue;
+      this.matter.body.setPosition(e.body,this._formPos(offsideRole,e.slot,{x:this.FIELD_W/2,y:half},true));
       this.matter.body.setVelocity(e.body,{x:0,y:0});
     }
     this.confrontResult={title:'🚩 Offside!',outcome:'',until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS};
@@ -3645,8 +3871,14 @@ export default class GameScene extends Phaser.Scene {
   /** Ball with its height: lifted off its ground position and drawn bigger,
    *  with the shadow left behind on the grass. */
   _drawBall(x,y,h){
-    this.ballGfx.setPosition(x,y-h*0.55).setScale(1+h/70);
-    this.ballShadow.setVisible(h>1).setPosition(x,y).setScale(1-Math.min(0.3,h/170));
+    // Rolls a frame every few pixels it travels along the ground (or in the air).
+    if(this._ballLast){ this._ballRoll+=Math.hypot(x-this._ballLast.x,y-this._ballLast.y); }
+    this._ballLast={x,y};
+    this.ballGfx.setFrame(`b${Math.floor(this._ballRoll/BALL_ROLL_PX)%BALL_FRAMES}`);
+    // Drawn at foot level of the pixel footballers (their feet sit below the
+    // body's centre), and over them, so it never vanishes behind a sprite.
+    this.ballGfx.setPosition(x,y+BALL_DRAW_DY-h*0.55).setScale(ART_SCALE*(1+h/70));
+    this.ballShadow.setVisible(h>1).setPosition(x,y+BALL_DRAW_DY).setScale(ART_SCALE*1.1*(1-Math.min(0.3,h/170)));
   }
   /** Closest opponent (any outfield or keeper still on the pitch) to
    *  `entry`, in pixels — used to gauge whether the AI's ball carrier is
@@ -4415,6 +4647,12 @@ export default class GameScene extends Phaser.Scene {
     if(this.matchClock.overtime){ this.matchClock.otElapsed+=delta/1000; return; }
     this.matchClock.secondsRemaining-=delta/1000;
     if(this.matchClock.secondsRemaining<=0){
+      // Time's up mid-duel or mid-shot: the play finishes first (and its
+      // result shows), then the whistle. Nothing new starts meanwhile —
+      // see the stoppage check in _hostUpdate.
+      this.matchClock.secondsRemaining=0;
+      if(this._playStillOn()){ this.matchClock.stoppage=true; return; }
+      this.matchClock.stoppage=false;
       if(this.matchClock.half===1){
         this.matchClock.half=2; this.matchClock.secondsRemaining=this.halfLengthS;
         // Whoever didn't start the match gets the second half, as in a real
@@ -4434,6 +4672,13 @@ export default class GameScene extends Phaser.Scene {
       else if(this.score.a===this.score.b&&this._tournamentPendingFixture?.kind!=='league') this._startOvertime();
       else { this.matchClock.ended=true; this.matchClock.secondsRemaining=0; }
     }
+  }
+  /** A duel or a shot sequence still being decided — or, once the clock has
+   *  run out on one, its result banner not yet showing who won. */
+  _playStillOn(){
+    if(this.confrontation||this.shotSeq) return true;
+    const r=this.confrontResult;
+    return !!(this.matchClock.stoppage&&r&&this.time.now<r.outcomeAt);
   }
   /** Level at full time: golden-goal overtime, as long as it takes — the next
    *  goal wins. Not in a league fixture, where a draw is a result that
@@ -4592,19 +4837,22 @@ export default class GameScene extends Phaser.Scene {
     try{ resume=JSON.parse(sessionStorage.getItem(RESUME_KEY)||'null'); sessionStorage.removeItem(RESUME_KEY); }catch{ return; }
     if(!resume) return;
     if(resume.kind==='rematch'&&resume.a?.starterIds?.length&&resume.b?.starterIds?.length){
-      document.getElementById('landing-panel').style.display='none';
+      this._hideMenus();
       this.uiMode='solo'; this._applyUiMode();
       if(AI_LEVELS[resume.aiLevel]){ this.aiLevel=resume.aiLevel; document.getElementById('ai-level-select').value=resume.aiLevel; }
       if(resume.halfLengthS>0){ this.halfLengthS=resume.halfLengthS; this.matchClock.secondsRemaining=this.halfLengthS; this._renderClock(this.matchClock); }
       this._rivalName=resume.b.name;
       this._startMatch(resume.a,resume.b);
     } else if(resume.kind==='tournament'&&this.activeTournament){
-      document.getElementById('landing-panel').style.display='none';
+      this._hideMenus();
       document.getElementById('tournament-panel').style.display='flex';
       this._renderTournamentPanel();
     } else if(resume.kind==='story'&&this.activeStory){
-      document.getElementById('landing-panel').style.display='none';
+      this._hideMenus();
       this._openStoryPanel();
+    } else {
+      this._hideMenus(); // nothing to resume after all: the plain landing page
+      document.getElementById('landing-panel').style.display='flex';
     }
   }
 
@@ -4706,7 +4954,7 @@ export default class GameScene extends Phaser.Scene {
 
     if(this.confrontation){
       this._progressConfront(now,myInput,inputB,aiActive);
-    } else if(!this.matchClock.ended && !this._checkOutOfBounds(now)){
+    } else if(!this.matchClock.ended && !this.matchClock.stoppage && !this._checkOutOfBounds(now)){
       this._updateActive('A'); this._updateActive('B');
       this._moveTeam('A',myInput.targets,now); this._moveTeam('B',inputB.targets,now);
       if(myInput.passTarget&&this.possRole==='A') this._doPass('A',myInput.passTarget);
@@ -4939,6 +5187,7 @@ export default class GameScene extends Phaser.Scene {
     document.querySelector('#scoreboard .score').textContent=`${scoreA} - ${scoreB}`;
     this._renderClock(this.remoteState.clock);
     this.currentPossession=this.remoteState.possession;
+    this._animatePlayers();
     // After the sent-off pass above and the possession assignment, so it
     // sees who's actually on the pitch and who's carrying the ball.
     this._declutterLabels();
@@ -5028,19 +5277,20 @@ export default class GameScene extends Phaser.Scene {
    *  client alike, from the synced result. */
   _playTechniqueFx(data){
     if(!data) return;
-    const ring=this.add.circle(data.x,data.y,16,data.color,0).setStrokeStyle(5,data.color,1).setDepth(8).setScale(0.4).setAlpha(1);
-    this.tweens.add({targets:ring,scale:3.2,alpha:0,duration:650,ease:'Cubic.Out',onComplete:()=>ring.destroy()});
+    // A pixel ring in the team's colour, growing in chunky steps.
+    const ring=this.add.image(data.x,data.y,TEX.ring).setTint(data.color).setDepth(8).setScale(0.8);
+    this.tweens.add({targets:ring,scale:6.4,alpha:0,duration:650,ease:'Cubic.Out',onComplete:()=>ring.destroy()});
     this._burst(data.x,data.y,ELEMENT_FX[data.el]||FX_NEUTRAL,ELEMENT_FX[data.el]?data.el:'neutral');
     if((data.power||0)>=FX_BIG_POWER&&!this._reducedMotion()) this.cameras.main.shake(220,0.006);
-    const txt=this.add.text(data.x,data.y-26,data.name,{fontSize:'11px',fontStyle:'bold',color:'#fff176',stroke:'#000',strokeThickness:4,resolution:3}).setOrigin(0.5,1).setDepth(9);
+    const txt=this.add.text(data.x,data.y-26,data.name,{fontSize:'12px',fontFamily:'"Pixelify Sans", monospace',fontStyle:'bold',color:'#fff176',stroke:'#000',strokeThickness:4,resolution:3}).setOrigin(0.5,1).setDepth(9);
     this.tweens.add({targets:txt,y:txt.y-24,alpha:0,duration:900,ease:'Cubic.Out',onComplete:()=>txt.destroy()});
   }
   /** The keeper holds it: a white-gold flash at their gloves and "SAVE!". */
   _playSaveFx({x,y}){
-    const ring=this.add.circle(x,y,14,0xffffff,0).setStrokeStyle(6,0xffe066,1).setDepth(8).setScale(0.5);
-    this.tweens.add({targets:ring,scale:2.6,alpha:0,duration:520,ease:'Cubic.Out',onComplete:()=>ring.destroy()});
+    const ring=this.add.image(x,y,TEX.ring).setTint(0xffe066).setDepth(8).setScale(0.9);
+    this.tweens.add({targets:ring,scale:4.6,alpha:0,duration:520,ease:'Cubic.Out',onComplete:()=>ring.destroy()});
     this._burst(x,y,{tint:[0xffffff,0xffe066],speed:{min:120,max:240},angle:{min:0,max:360},gravityY:0,lifespan:450,scale:{start:1.8,end:0},count:24},'save');
-    const txt=this.add.text(x,y-24,'SAVE!',{fontSize:'16px',fontStyle:'bold',color:'#ffffff',stroke:'#000',strokeThickness:5,resolution:3}).setOrigin(0.5,1).setDepth(9).setScale(0.6);
+    const txt=this.add.text(x,y-24,'SAVE!',{fontSize:'16px',fontFamily:'"Pixelify Sans", monospace',fontStyle:'bold',color:'#ffffff',stroke:'#000',strokeThickness:5,resolution:3}).setOrigin(0.5,1).setDepth(9).setScale(0.6);
     this.tweens.add({targets:txt,scale:1.1,y:txt.y-18,duration:260,ease:'Back.Out',onComplete:()=>this.tweens.add({targets:txt,alpha:0,delay:350,duration:300,onComplete:()=>txt.destroy()})});
   }
   /** A goal: confetti in the scorer's colour raining over the whole screen.
@@ -5081,6 +5331,10 @@ export default class GameScene extends Phaser.Scene {
     };
     const lit=!!rv.lit;
     side('a',rv.a,lit); side('d',rv.d,lit);
+    // Rebuilt only when the matchup changes: this runs every frame, and a
+    // fresh SVG each time would restart the glowing arrow's animation.
+    const vs=document.getElementById('duel-vs'), key=`${rv.a.element}|${rv.d.element}|${rv.a.color}|${rv.d.color}`;
+    if(vs.dataset.key!==key){ vs.dataset.key=key; vs.innerHTML=`<div>VS</div>${this._elementWheel(rv.a.element,rv.d.element,rv.a.color,rv.d.color,92)}`; }
   }
 
   _updateConfrontUI(confrontation,now){
@@ -5103,7 +5357,7 @@ export default class GameScene extends Phaser.Scene {
       document.getElementById('confrontation-title').textContent=waiting;
       document.getElementById('conf-normal').style.display='none';
       document.getElementById('conf-tech-list').innerHTML='';
-      document.getElementById('confrontation-player-info').innerHTML='';
+      const info=document.getElementById('confrontation-player-info'); info.innerHTML=''; info.dataset.key='';
       const rem=Math.max(0,confrontation.deadline-now);
       document.getElementById('confrontation-timer-fill').style.width=`${(rem/CONFRONT_MS)*100}%`;
       return;
@@ -5136,8 +5390,16 @@ export default class GameScene extends Phaser.Scene {
     const oppId=confrontation.solo?(oppRole==='A'?this.gkIdA:this.gkIdB):(amA?confrontation.defenderId:confrontation.attackerId);
     const oppStats=this._statsFor(oppRole,oppId);
     const side=(label,st)=>`<span class="conf-side"><span class="conf-who">${label}</span>${st?.element?this._elBadge(st.element):'<span class="el-badge">—</span>'}</span>`;
-    const matchup=`<div class="conf-matchup">${side('You',stats)}<span class="conf-vs">VS</span>${side(oppStats?.nickname||oppStats?.name||'Rival',oppStats)}</div>`;
-    document.getElementById('confrontation-player-info').innerHTML=stats?`<b>${rp?.name||stats.name}</b> — PT ${Math.round(stats.sp)}/${Math.round(stats.maxSP)}${matchup}`:'';
+    const myCol=this._css3(this.role==='A'?this.teamColorA:this.teamColorB), oppCol=this._css3(this.role==='A'?this.teamColorB:this.teamColorA);
+    const infoKey=stats?`${rp?.name||stats.name}|${Math.round(stats.sp)}|${Math.round(stats.maxSP)}|${stats.element}|${oppStats?.element}|${oppStats?.name}|${myCol}|${oppCol}`:'';
+    const info=document.getElementById('confrontation-player-info');
+    // Rewritten only when something in it changes (this runs every frame):
+    // the wheel's glowing arrow would otherwise restart its animation.
+    if(info.dataset.key!==infoKey){
+      info.dataset.key=infoKey;
+      const matchup=`<div class="conf-matchup">${side('You',stats)}${this._elementWheel(stats?.element,oppStats?.element,myCol,oppCol,68)}${side(oppStats?.nickname||oppStats?.name||'Rival',oppStats)}</div>`;
+      info.innerHTML=stats?`<b>${rp?.name||stats.name}</b> — PT ${Math.round(stats.sp)}/${Math.round(stats.maxSP)}${matchup}`:'';
+    }
     // One button per technique this player has in the category — a player
     // with more than one of the same kind (see techniquesFor) can pick
     // whichever they want, not just whichever happens to be "the" one.
@@ -5164,14 +5426,12 @@ export default class GameScene extends Phaser.Scene {
     this.teamA.forEach(e=>{
       e.gfx.setPosition(e.body.position.x,e.body.position.y);
       e.label.setPosition(e.body.position.x,e.body.position.y+15);
-      // Flash stun visual: tint grey while stunned
-      e.gfx.setFillStyle(this._isStunned(e.id,now)?0x888888:this.teamColorA);
     });
     this.teamB.forEach(e=>{
       e.gfx.setPosition(e.body.position.x,e.body.position.y);
       e.label.setPosition(e.body.position.x,e.body.position.y+15);
-      e.gfx.setFillStyle(this._isStunned(e.id,now)?0x888888:this.teamColorB);
     });
+    this._animatePlayers();
     this._declutterLabels();
     this._highlightActive(); this._updatePossRing();
   }
@@ -5204,13 +5464,20 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Kit colours (grey while stunned) and the ring under each side's
+   *  steered player — host and guest alike, every frame. */
   _highlightActive(){
-    this.teamA.forEach(e=>e.gfx.setStrokeStyle(e.id===this.activeIdA?3:0,0xffffff));
-    this.teamB.forEach(e=>e.gfx.setStrokeStyle(e.id===this.activeIdB?3:0,0xffffff));
+    const now=this.time.now;
+    this.teamA.forEach(e=>this._paintPlayer(e,this.teamColorA,{stunned:this._isStunned(e.id,now),active:e.id===this.activeIdA,keeper:e.id===this.gkIdA}));
+    this.teamB.forEach(e=>this._paintPlayer(e,this.teamColorB,{stunned:this._isStunned(e.id,now),active:e.id===this.activeIdB,keeper:e.id===this.gkIdB}));
   }
 
   _updatePossRing(){
-    if(this.currentPossession){ const e=this._activeEntry(this.currentPossession); if(e){this.possRing.setPosition(e.gfx.x,e.gfx.y).setVisible(true);return;} }
+    if(this.currentPossession){
+      const e=this._activeEntry(this.currentPossession);
+      // Bobbing over the carrier's head.
+      if(e){ this.possRing.setPosition(e.gfx.x,e.gfx.y-30+Math.round(Math.sin(this.time.now/160)*1.5)).setVisible(true); return; }
+    }
     this.possRing.setVisible(false);
   }
 }
