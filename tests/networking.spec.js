@@ -493,4 +493,43 @@ test.describe('guest responsiveness', () => {
     expect(r.lead).toBeGreaterThan(2); // ahead of the host's (stale) position, toward the waypoint
     expect(r.after).toBeLessThan(r.before * 0.7);
   });
+  test('stamina reaches the guest: the host sends whole percents, and a tired player shows the drop there too', async ({ browser }) => {
+    const hostPage = await browser.newPage();
+    await hostMatch(hostPage);
+    // Make two of the host's own and one of the rival's players tired, then read what it sends.
+    const { state, hostSquad, tiredIds } = await hostPage.evaluate(async () => {
+      const s = window.__scene;
+      const setPct = (role, i, pct) => { const e = (role === 'A' ? s.teamA : s.teamB)[i]; const st = s._statsFor(role, e.id); st.stamina = st.maxStamina * pct / 100; return e.id; };
+      const ids = { a3: setPct('A', 3, 30), a4: setPct('A', 4, 10), b2: setPct('B', 2, 25) };
+      await new Promise((r) => setTimeout(r, 500));
+      // Merged oldest to newest, as a guest does: the squads from the first
+      // state, the stamina from the latest.
+      const st = s.__states.filter((d) => d.matchStarted);
+      return { state: st.reduce((acc, d) => ({ ...acc, ...d }), {}), hostSquad: s.mySquadPayload, tiredIds: ids };
+    });
+    await hostPage.close();
+    expect(state.statsAll.stam.a[3]).toBe(30);
+    expect(state.statsAll.stam.a[4]).toBe(10);
+    expect(state.statsAll.stam.b[2]).toBe(25);
+
+    const page = await browser.newPage();
+    await multiplayer(page, { host: false });
+    const r = await page.evaluate(({ state, hostSquad }) => {
+      const s = window.__scene;
+      s.mySquadPayload = { starterIds: state.starterIds.b, benchIds: [], formation: '4-4-2' };
+      s.mySquadConfirmed = true;
+      s.remoteSquadPayload = hostSquad;
+      s._incomingState(state);
+      s._buildClientTeams();
+      s._syncClientIds(s.remoteState);
+      s._highlightActive();
+      const drops = (team, i) => team[i].gfx.px.drops.map((d) => d.visible);
+      return { a3: drops(s.teamA, 3), a4: drops(s.teamA, 4), b2: drops(s.teamB, 2), fresh: drops(s.teamA, 5), lvl: s._tiredLevel('A', s.teamA[3].id) };
+    }, { state, hostSquad });
+    expect(r.a3).toEqual([true, false]);   // 30%: tired
+    expect(r.a4).toEqual([true, true]);    // 10%: exhausted
+    expect(r.b2).toEqual([true, false]);
+    expect(r.fresh).toEqual([false, false]);
+    expect(r.lvl).toBe(1);
+  });
 });

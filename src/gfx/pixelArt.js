@@ -80,7 +80,7 @@ const TINT_PAL = { k: '#ffffff', K: '#b4b4b4', h: '#ffffff', H: '#a8a8a8' };
 export const TEX = {
   plBase: 'px-pl-base', plKeeper: 'px-pl-keeper', plKit: 'px-pl-kit', plHair: 'px-pl-hair',
   ball: 'px-ball', shadow: 'px-shadow', ring: 'px-ring', ellipse: 'px-ellipse', arrow: 'px-arrow',
-  pitch: 'px-pitch',
+  drop: 'px-drop', pitch: 'px-pitch',
 };
 
 /** A canvas texture holding `frames` (name → string rows) side by side, each
@@ -173,6 +173,12 @@ function makeMarkers(scene) {
       if (c === '.') return;
       ctx.fillStyle = c === 'o' ? '#5a4500' : '#ffffff'; ctx.fillRect(x, y, 1, 1);
     }));
+  });
+  // A bead of sweat: shows over a tired player. o = outline, b = water, w = glint.
+  shape(scene, TEX.drop, 5, 7, (ctx) => {
+    const rows = ['..o..', '..o..', '.obo.', 'obbbo', 'obwbo', 'obbbo', '.ooo.'];
+    const col = { o: '#1d3f8f', b: '#7fd0ff', w: '#ffffff' };
+    rows.forEach((r, y) => [...r].forEach((c, x) => { if (c === '.') return; ctx.fillStyle = col[c]; ctx.fillRect(x, y, 1, 1); }));
   });
 }
 

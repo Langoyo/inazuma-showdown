@@ -414,6 +414,8 @@
       border: 2px solid rgba(255,255,255,0.8); transition: box-shadow 0.1s;
     }
     .slot-pin.empty   { background: rgba(255,255,255,0.12); border-style: dashed; }
+    /* sweat drops over a tired player's pin in the in-game team panel */
+    .slot-pin .pin-sweat { position: absolute; top: -8px; right: -9px; font-size: 11px; line-height: 1; z-index: 3; filter: drop-shadow(1px 1px 0 #000); pointer-events: none; }
     .slot-pin.selected, .bench-pin.selected { box-shadow: 0 0 0 3px var(--gold); border-color: var(--gold); z-index: 5; }
     .slot-pin .pin-avatar {
       width: 36px; height: 36px; display: flex;

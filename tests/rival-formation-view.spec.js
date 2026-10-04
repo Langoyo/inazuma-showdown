@@ -40,19 +40,43 @@ test.describe('team panel — rival formation view', () => {
     );
     expect(pitchIdsAfter).toEqual(rivalIds.map(String).sort());
 
-    // Tapping a rival pin opens their read-only stats, not a sub selection
-    // (which would otherwise let a rival pin pair with one of your own).
-    await page.locator('#sub-list-inner .slot-pin[data-roster-id]').first().click();
+    // A quick tap on a rival pin or bench pin does nothing: no stats, and no
+    // sub selection (which would let a rival pin pair with one of your own).
+    // Their stats open on a press and hold, like everywhere else.
+    const panelOpen = () => page.evaluate(() => document.getElementById('player-stat-panel').style.display === 'block');
+    const pin = page.locator('#sub-list-inner .slot-pin[data-roster-id]').first();
+    await pin.click();
     await page.waitForTimeout(150);
-    const afterTap = await page.evaluate(() => ({
-      subSel: window.__scene.subSel,
-      panelDisplay: document.getElementById('player-stat-panel').style.display,
-    }));
-    expect(afterTap.subSel).toBeNull();
-    expect(afterTap.panelDisplay).toBe('block');
+    expect(await panelOpen()).toBe(false);
+    expect(await page.evaluate(() => window.__scene.subSel)).toBeNull();
+    const bench = page.locator('#sub-list-inner .bench-pin[data-bench-id]').first();
+    if (await bench.count()) {
+      await bench.click();
+      await page.waitForTimeout(150);
+      expect(await panelOpen()).toBe(false);
+    }
+    // Holding opens that player's stats, still without arming a selection.
+    const rosterId = await pin.getAttribute('data-roster-id');
+    const hold = async (loc, ms = 650) => {
+      const box = await loc.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down(); await page.waitForTimeout(ms); await page.mouse.up();
+    };
+    await hold(pin);
+    await page.waitForTimeout(150);
+    expect(await panelOpen()).toBe(true);
+    await expect(page.locator('#player-stat-panel')).toContainText(await page.evaluate((id) => { const p = window.__scene.rosterAll.find((r) => r.id === id); return p.nickname || p.name; }, rosterId));
+    expect(await page.evaluate(() => window.__scene.subSel)).toBeNull();
+    await expect(page.locator('#sub-panel-state')).toContainText('Press and hold');
+    // A hold that wanders off the pin (a scroll) opens nothing.
+    await page.click('#player-stat-panel button');
+    const box = await pin.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down(); await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 40, { steps: 4 });
+    await page.waitForTimeout(650); await page.mouse.up();
+    expect(await panelOpen()).toBe(false);
 
     // Switching back to "Your Team" restores the normal editable view.
-    await page.click('#player-stat-panel button');
     await page.click('#sub-panel-side-tabs .sub-panel-side-tab[data-side="me"]');
     await page.waitForTimeout(100);
     await expect(page.locator('#formation-preset-btns')).toBeVisible();

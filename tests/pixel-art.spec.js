@@ -131,6 +131,51 @@ test.describe('pixel art', () => {
     expect(stunned).toBe(r1.wantA);
   });
 
+  test('a tired player shows a sweat drop, an exhausted one two, and it goes when they recover', async ({ page }) => {
+    await match(page);
+    const level = (pct) => page.evaluate(async (pct) => {
+      const s = window.__scene; s._setPaused(true);
+      const e = s.teamA[6], rival = s.teamB[6];
+      for (const [role, en] of [['A', e], ['B', rival]]) { const st = s._statsFor(role, en.id); st.stamina = st.maxStamina * pct / 100; }
+      for (let i = 0; i < 6; i++) await new Promise((r) => requestAnimationFrame(r));
+      const d = (en) => en.gfx.px.drops.map((x) => x.visible);
+      return { mine: d(e), rival: d(rival), y: e.gfx.px.drops[0].y, alpha: e.gfx.px.drops[0].alpha };
+    }, pct);
+    const fine = await level(100);
+    expect(fine.mine).toEqual([false, false]);
+    expect(fine.rival).toEqual([false, false]);
+    const tired = await level(30);
+    expect(tired.mine).toEqual([true, false]);
+    expect(tired.rival).toEqual([true, false]); // the rival's flagging shows too
+    expect(tired.y).toBeGreaterThan(-16);       // trickling down beside the head
+    expect(tired.y).toBeLessThan(0);
+    expect(tired.alpha).toBeGreaterThan(0);
+    expect(tired.alpha).toBeLessThanOrEqual(1);
+    expect((await level(10)).mine).toEqual([true, true]);
+    expect((await level(60)).mine).toEqual([false, false]); // fresh legs / recovered
+  });
+
+  test('the in-game team panel marks tired players with drops, on both sides', async ({ page }) => {
+    await match(page);
+    await page.evaluate(() => {
+      const s = window.__scene;
+      const set = (role, i, pct) => { const e = (role === 'A' ? s.teamA : s.teamB)[i]; const st = s._statsFor(role, e.id); st.stamina = st.maxStamina * pct / 100; return e.id; };
+      window.__ids = { a: set('A', 3, 30), a2: set('A', 4, 10), b: set('B', 3, 20) };
+    });
+    await page.click('#sub-button');
+    await page.waitForFunction(() => window.__scene.teamPanelOpen === true, { timeout: 3000 });
+    const count = (id) => page.evaluate((id) => document.querySelector(`#sub-list-inner .slot-pin[data-roster-id="${id}"] .pin-sweat`)?.textContent.length ?? 0, id);
+    const ids = await page.evaluate(() => window.__ids);
+    expect(await count(ids.a)).toBe(2);   // one 💧 (a surrogate pair is 2 chars)
+    expect(await count(ids.a2)).toBe(4);  // exhausted: two
+    await page.evaluate(() => document.querySelectorAll('#sub-list-inner .slot-pin[data-roster-id]').length);
+    const others = await page.evaluate((ids) => [...document.querySelectorAll('#sub-list-inner .slot-pin[data-roster-id]')].filter((p) => ![ids.a, ids.a2].includes(p.dataset.rosterId) && p.querySelector('.pin-sweat')).length, ids);
+    expect(others).toBe(0);               // rested players have none
+    // The rival's view shows theirs.
+    await page.click('#sub-panel-side-tabs [data-side="rival"]');
+    expect(await count(ids.b)).toBe(2);
+  });
+
   test('the ball spins as it rolls', async ({ page }) => {
     await match(page);
     await page.evaluate(() => { const s = window.__scene; s._setPaused(true); window.__ballFrames = new Set(); });
