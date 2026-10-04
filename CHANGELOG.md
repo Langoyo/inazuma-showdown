@@ -4,6 +4,46 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Pixel-art match: footballers, ball, pitch and effects
+The menus were already retro (nes.css, pixel fonts, pixel portraits), but
+the match was drawn with smooth vector shapes. Now it's pixel art too,
+painted in code at load time (`src/gfx/pixelArt.js`): no image files, and
+crisp at any zoom with Phaser's `pixelArt` mode on.
+- **Footballers.** Each player is a 12×16 pixel sprite drawn at 2×, with
+  three layers so colours are just tints:
+  - an outline / skin / shorts / boots base;
+  - a white kit tinted with the team colour;
+  - white hair tinted with that player's own hair colour.
+- **Hair from the portrait.** The colour is the dominant colour at the
+  top of their pixel portrait (`src/gfx/hairColor.js`, loaded in the
+  background). It follows substitutions and swaps.
+- **Keepers** wear gloves and a darker shade of the kit. That follows
+  whoever is in goal, through substitutions too.
+- **Run cycle and facing.** Players run through four frames when moving
+  (faster at speed), stand idle when still, and face left or right the way
+  they're going. It's worked out from each sprite's own movement, so the
+  guest's screen animates the same way from the synced positions.
+- **Stun and active.** A stunned player's kit greys out. The player each
+  side is steering has a white pixel ring at their feet.
+- **The ball** has classic black patches and spins as it rolls (4
+  frames). It's drawn at the players' feet and over them, so it never
+  disappears behind a sprite. There's a pixel shadow when it's in the
+  air.
+- **The pitch** is one pixel image:
+  - mown stripes and a light speckle;
+  - chunky white markings (touchlines, halfway line, centre circle and
+    spot, penalty and goal areas, spots, the "D", corner arcs);
+  - the darker run-off behind each goal, and pixel goal nets with posts.
+- **Markers and effects:**
+  - a gold pixel arrow bobs over the ball carrier;
+  - technique and save bursts grow as pixel rings;
+  - drawn runs are dotted pixel trails;
+  - pass, shot and keeper-reach markers are stepped pixel rings;
+  - "SAVE!" and the technique names use the pixel font.
+- Tests: new `tests/pixel-art.spec.js`. `player-images.spec.js` now
+  checks that the on-pitch sprites are pixel footballers rather than
+  portraits.
+
 ## Landscape on a phone or tablet: the pitch scales to the screen width
 - **Before:** the pitch always drew 1:1 at 960px wide. A screen wider than
   that showed black bars either side, and a phone in landscape just

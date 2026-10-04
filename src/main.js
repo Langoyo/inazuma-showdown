@@ -12,6 +12,9 @@ import 'nes.css/css/nes.min.css';
 const config = {
   type: Phaser.AUTO,
   parent: 'game-container',
+  // The match is drawn in pixel art (see src/gfx/pixelArt.js): nearest-
+  // neighbour scaling and whole-pixel positions keep it crisp.
+  pixelArt: true,
   backgroundColor: '#0b3d1f',
   scale: {
     mode: Phaser.Scale.RESIZE,
