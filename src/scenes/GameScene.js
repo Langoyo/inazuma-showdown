@@ -131,8 +131,7 @@ const BENCH_COVER       = ['GK','DF','MF','FW','MF']; // positions the auto-pick
 const HALF_S            = 3 * 60;
 const HALFTIME_PAUSE_MS = 3000; // how long play freezes for the half-time break
 const GOAL_PAUSE_MS     = 2500; // how long play freezes to show the goal banner
-const OFFSIDE_PAUSE_MS  = 1500; // play freezes after an offside while the attackers drop back
-const OFFSIDE_PUSHBACK  = 40;   // px onside of the ball the offside side's players restart from
+const OFFSIDE_PAUSE_MS  = 1500; // play freezes after an offside while the offside side drops back to its own half
 const AI_SUB_CHECK_MS   = 8000; // how often the AI reconsiders its own lineup
 const AI_SUB_STAMINA    = 0.35; // fraction of maxStamina below which a player becomes a sub candidate
 const AI_MAX_SUBS       = 3;    // matches the real substitution limit
@@ -3815,15 +3814,20 @@ export default class GameScene extends Phaser.Scene {
     const defendingRole=offsideRole==='A'?'B':'A';
     const spot={x:this.ball.position.x,y:this.ball.position.y};
     this._placeBallAndAward(defendingRole,spot,now);
-    // Everyone on the offside side who's ahead of the ball restarts from
-    // behind it (OFFSIDE_PUSHBACK onside of it), keeping their lane.
-    const ballDist=this._distToGoal(spot.y,offsideRole);
+    // The offside side goes back to its own half for the free kick: anyone
+    // still in the rival's half is sent to their formation spot on their own
+    // side of the halfway line (the kickoff layout, which keeps the team's
+    // shape, and drops off the line since the other side has the ball now).
+    // Players already in their own half, and the keeper, stay where they are.
     const team=offsideRole==='A'?this.teamA:this.teamB;
+    const half=this.FIELD_H/2;
     for(const e of team){
       if(e.slot===0||!e.body||this._isOut(offsideRole,e.id)) continue;
-      if(this._distToGoal(e.body.position.y,offsideRole)>=ballDist+OFFSIDE_PUSHBACK) continue;
-      const y=offsideRole==='A'?spot.y+OFFSIDE_PUSHBACK:spot.y-OFFSIDE_PUSHBACK;
-      this.matter.body.setPosition(e.body,{x:e.body.position.x,y:Phaser.Math.Clamp(y,20,this.FIELD_H-20)});
+      const y=e.body.position.y;
+      // A defends the bottom of the map (attacks toward y=0); B the top.
+      const inOwnHalf=offsideRole==='A'?y>=half:y<=half;
+      if(inOwnHalf) continue;
+      this.matter.body.setPosition(e.body,this._formPos(offsideRole,e.slot,{x:this.FIELD_W/2,y:half},true));
       this.matter.body.setVelocity(e.body,{x:0,y:0});
     }
     this.confrontResult={title:'🚩 Offside!',outcome:'',until:now+RESULT_MS,outcomeAt:now+RESULT_DELAY_MS};

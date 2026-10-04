@@ -4,6 +4,22 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Offside: the offside side goes back to its own half
+- **Before:** only the offside side's players who were ahead of the ball
+  were moved, to 40px behind it. That's still in the rival's half, so
+  the team stayed crowded around the free kick.
+- **Now:** every outfield player of the side that committed the offside
+  who is in the rival's half, ahead of the ball or not, is sent back to
+  their formation spot in their own half, the kickoff layout
+  (`_formPos` with `clampOwnHalf`), which keeps the team's shape and
+  drops off the halfway line since the other side now has the ball.
+  - Players already in their own half stay where they are, and so does
+    the keeper.
+  - The flag banner and 1.5s freeze are unchanged; the free kick is still
+    taken from the spot. `OFFSIDE_PUSHBACK` is gone.
+- Tests: `match-tweaks.spec.js`, for both sides: players sent home, to
+  their kickoff spots; players already home and the keeper untouched.
+
 ## Pixel-art match: footballers, ball, pitch and effects
 The menus were already retro (nes.css, pixel fonts, pixel portraits), but
 the match was drawn with smooth vector shapes. Now it's pixel art too,

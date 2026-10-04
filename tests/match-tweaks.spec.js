@@ -37,25 +37,47 @@ test.describe('duel cards', () => {
 });
 
 test.describe('offside', () => {
-  test('play freezes for a beat and the offside side restarts from behind the ball', async ({ page }) => {
-    await match(page);
-    const r = await page.evaluate(() => {
-      const s = window.__scene;
-      const out = s.teamA.filter((e) => e.slot !== 0).slice(0, 2);
-      s.matter.body.setPosition(s.ball, { x: 480, y: 600 });
-      window.__put(out[0], 300, 400); window.__put(out[1], 700, 450);
-      s._commitOffside('A', s.time.now);
-      return { paused: s.paused, ys: out.map((e) => e.body.position.y), xs: out.map((e) => e.body.position.x), ballY: s.ball.position.y, title: s.confrontResult.title };
+  // The offside side goes back to its own half for the free kick; anyone
+  // already there, and the keeper, stay put. A defends the bottom (attacks
+  // y=0), B the top (attacks y=1520).
+  for (const [role, ball, inRivalHalf, inOwnHalf] of [
+    ['A', { x: 480, y: 600 }, [{ x: 300, y: 400 }, { x: 700, y: 700 }], [{ x: 520, y: 1100 }]],
+    ['B', { x: 480, y: 920 }, [{ x: 300, y: 1120 }, { x: 700, y: 820 }], [{ x: 520, y: 420 }]],
+  ]) {
+    test(`play freezes for a beat and side ${role} drops back to its own half`, async ({ page }) => {
+      await match(page);
+      const r = await page.evaluate(([role, ball, rivalHalf, ownHalf]) => {
+        const s = window.__scene;
+        const team = role === 'A' ? s.teamA : s.teamB;
+        const out = team.filter((e) => e.slot !== 0);
+        const gk = team.find((e) => e.slot === 0);
+        s.matter.body.setPosition(s.ball, ball);
+        const movers = out.slice(0, rivalHalf.length), stayers = out.slice(rivalHalf.length, rivalHalf.length + ownHalf.length);
+        movers.forEach((e, i) => window.__put(e, rivalHalf[i].x, rivalHalf[i].y));
+        stayers.forEach((e, i) => window.__put(e, ownHalf[i].x, ownHalf[i].y));
+        const gkBefore = { x: gk.body.position.x, y: gk.body.position.y };
+        s._commitOffside(role, s.time.now);
+        const half = s.FIELD_H / 2;
+        return {
+          paused: s.paused, title: s.confrontResult.title,
+          moversOwnHalf: movers.map((e) => (role === 'A' ? e.body.position.y > half : e.body.position.y < half)),
+          moversAtFormation: movers.map((e) => { const p = s._formPos(role, e.slot, { x: s.FIELD_W / 2, y: half }, true); return Math.hypot(p.x - e.body.position.x, p.y - e.body.position.y) < 2; }),
+          stayers: stayers.map((e, i) => [e.body.position.x - ownHalf[i].x, e.body.position.y - ownHalf[i].y]),
+          gkMoved: Math.hypot(gk.body.position.x - gkBefore.x, gk.body.position.y - gkBefore.y),
+          nobodyInRivalHalf: out.filter((e) => (role === 'A' ? e.body.position.y < half : e.body.position.y > half)).length,
+        };
+      }, [role, ball, inRivalHalf, inOwnHalf]);
+      expect(r.paused).toBe(true);
+      expect(r.title).toContain('Offside');
+      expect(r.moversOwnHalf).toEqual([true, true]);        // sent home...
+      expect(r.moversAtFormation).toEqual([true, true]);    // ...to their kickoff spots
+      expect(r.stayers).toEqual([[0, 0]]);                  // already home: left alone
+      expect(r.gkMoved).toBe(0);
+      // The flag is on screen during the freeze, not just after it.
+      await expect(page.locator('#result-title')).toContainText('Offside');
+      await page.waitForFunction(() => window.__scene.paused === false, { timeout: 4000 });
     });
-    expect(r.paused).toBe(true);
-    expect(r.title).toContain('Offside');
-    // A attacks toward y=0, so "behind the ball" is below it.
-    for (const y of r.ys) expect(y).toBeGreaterThanOrEqual(r.ballY + 39);
-    expect(r.xs).toEqual([300, 700]); // they keep their lanes
-    // The flag is on screen during the freeze, not just after it.
-    await expect(page.locator('#result-title')).toContainText('Offside');
-    await page.waitForFunction(() => window.__scene.paused === false, { timeout: 4000 });
-  });
+  }
 });
 
 test.describe('stamina', () => {
