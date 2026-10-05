@@ -2,7 +2,10 @@
 // reading room.selfId gave undefined, and every host/guest comparison
 // against undefined is false both ways: first both players became the guest,
 // then (with the rule flipped) both became the host.
-import { joinRoom, selfId } from 'trystero/torrent';
+//
+// joinRoom is our copy of Trystero's tracker strategy (fastTorrent.js),
+// which looks for the rival every few seconds until one is connected.
+import { joinRoom, selfId, setSearching, isSearching } from './fastTorrent.js';
 
 // APP_ID identifies this app inside Trystero's public signaling network.
 const APP_ID = 'inazuma-clone-proto-v1';
@@ -103,6 +106,9 @@ export function isLowestId(myId, peerIds) {
 }
 
 export function connectToRoom(roomCode) {
+  // Look for the rival at the fast pace until one connects (see fastTorrent.js).
+  setSearching(true);
+  let searchingSince = Date.now();
   const room = joinRoom({ appId: APP_ID, relayUrls: TRACKER_URLS, rtcConfig: { iceServers: ICE_SERVERS } }, roomCode);
 
   const [sendInput, onInput] = room.makeAction('input');
@@ -126,6 +132,7 @@ export function connectToRoom(roomCode) {
   let externalLeaveHandler = null;
   room.onPeerJoin((id) => {
     peers.add(id);
+    setSearching(false); // found: back to the trackers' normal pace
     console.log('[net] peer connected:', id, '— me:', selfId, '— peers in room:', peers.size, '— am I host?', isHost());
     // The WebRTC handshake takes real time, so isHost() called right at
     // page load (before either browser knows the other exists) always
@@ -138,6 +145,8 @@ export function connectToRoom(roomCode) {
 
   room.onPeerLeave((id) => {
     peers.delete(id);
+    // Nobody left: look for them again straight away.
+    if (peers.size === 0) { setSearching(true); searchingSince = Date.now(); }
     console.log('[net] peer disconnected:', id, '— peers in room:', peers.size);
     if (externalLeaveHandler) externalLeaveHandler(id);
   });
@@ -166,7 +175,12 @@ export function connectToRoom(roomCode) {
     try { return await room.ping(id); } catch { return null; }
   }
 
-  return { room, selfId, isHost, hasPeer, peerCount, ping, onPeerConnect, onPeerDisconnect, sendInput, onInput, sendState, onState, sendSquad, onSquad };
+  /** Seconds spent looking for the rival so far, or null once one is connected. */
+  function searchingFor() {
+    return isSearching() && peers.size === 0 ? Math.floor((Date.now() - searchingSince) / 1000) : null;
+  }
+
+  return { room, selfId, isHost, hasPeer, peerCount, ping, searchingFor, onPeerConnect, onPeerDisconnect, sendInput, onInput, sendState, onState, sendSquad, onSquad };
 }
 
 /** Generates or reads a short room code from the URL (?room=XXXX). */

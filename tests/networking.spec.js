@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { waitForRosterLoaded } from './helpers.js';
+import { waitForRosterLoaded, waitForRosterAtModeSelect } from './helpers.js';
 
 test.describe('multiplayer squad-confirm race', () => {
   test('confirming your squad before a peer connects waits, instead of silently starting a solo match vs AI', async ({ page }) => {
@@ -340,6 +340,59 @@ test.describe('host is the lowest id in the room', () => {
   });
 });
 
+
+// Finding the rival: our copy of Trystero's tracker strategy announces every
+// few seconds until someone connects, instead of every 33s–2min.
+test.describe('looking for the rival', () => {
+  test('announces every 3s while searching, at the trackers own pace once connected', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    const r = await page.evaluate(async () => {
+      const m = await import('/src/network/fastTorrent.js');
+      return {
+        consts: [m.SEARCH_ANNOUNCE_MS, m.IDLE_ANNOUNCE_MS, m.MAX_ANNOUNCE_MS],
+        searching: [m.announceDelay(true, undefined), m.announceDelay(true, 90_000), m.announceDelay(true, 1_000)],
+        connected: [m.announceDelay(false, undefined), m.announceDelay(false, 1_000), m.announceDelay(false, 60_000), m.announceDelay(false, 600_000)],
+      };
+    });
+    expect(r.consts).toEqual([3_000, 33_333, 120_333]);
+    expect(r.searching).toEqual([3_000, 3_000, 3_000]);
+    expect(r.connected).toEqual([33_333, 33_333, 60_000, 120_333]);
+  });
+
+  test('multiplayer starts out searching and the status line counts the seconds', async ({ page }) => {
+    await waitForRosterAtModeSelect(page);
+    await page.click('#mode-multi-btn');
+    await page.click('#mode-multi-start-btn');
+    const r = await page.evaluate(async () => {
+      const m = await import('/src/network/fastTorrent.js');
+      return { searching: m.isSearching(), secs: window.__scene.net.searchingFor(), sameId: m.selfId === window.__scene.net.selfId };
+    });
+    expect(r.searching).toBe(true);
+    expect(typeof r.secs).toBe('number');
+    expect(r.sameId).toBe(true);
+    await expect(page.locator('#squad-status')).toContainText(/looking for your rival… \d+s/);
+    // It ticks on its own, without anything else re-rendering the line.
+    const before = await page.locator('#squad-status').textContent();
+    await page.waitForTimeout(2200);
+    expect(await page.locator('#squad-status').textContent()).not.toBe(before);
+  });
+
+  test('setSearching flips the pace and searchingFor reports null once not searching', async ({ page }) => {
+    await waitForRosterAtModeSelect(page);
+    await page.click('#mode-multi-btn');
+    await page.click('#mode-multi-start-btn');
+    const r = await page.evaluate(async () => {
+      const m = await import('/src/network/fastTorrent.js');
+      m.setSearching(false);
+      const off = [m.isSearching(), window.__scene.net.searchingFor()];
+      m.setSearching(true);
+      const on = [m.isSearching(), typeof window.__scene.net.searchingFor()];
+      return { off, on };
+    });
+    expect(r.off).toEqual([false, null]);
+    expect(r.on).toEqual([true, 'number']);
+  });
+});
 
 // Guest responsiveness: less traffic on the reliable channel, taps delivered
 // exactly once, rarely-changing state sent only when it changes, and the

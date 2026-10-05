@@ -4,6 +4,30 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Multiplayer finds the rival in seconds, not minutes
+- **Before:** after both players reloaded into the same room, it could
+  take half a minute or more before they saw each other. Two browsers only
+  meet through a BitTorrent tracker "announce", and Trystero announces
+  once on joining and then every 33s (stretched up to 2 minutes when a
+  tracker asks). If that first exchange missed, the next try was that far
+  off.
+- **Now** `src/network/fastTorrent.js`, our copy of Trystero's tracker
+  strategy, announces **every 3 seconds while nobody is connected**. Once
+  the rival connects it goes back to Trystero's own pace, so a match
+  doesn't keep signalling, and if the rival drops out it starts looking
+  again straight away.
+  - Each announce sends 3 WebRTC offers instead of 10 (a room is two
+    players), and offers nobody answered are closed after two more
+    announces. Trystero never closes them, which at the faster pace would
+    have piled up to the browser's connection limit.
+  - The squad editor's status line counts while it looks: "Not connected
+    yet — share code ABCDE · looking for your rival… 7s".
+  - The dev server now pre-bundles Trystero's WebRTC library
+    (`vite.config.js`), since `fastTorrent.js` imports Trystero's source
+    files directly.
+- Tests: `networking.spec.js` ("looking for the rival": the pace while
+  searching vs connected, searching from the start, the ticking counter).
+
 ## Tournament and story difficulty: pick it up front, every match plays at it
 - **Before:** the AI difficulty was only a small selector in the squad
   editor. A story saved the level, but a tournament didn't, so after the

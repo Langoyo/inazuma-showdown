@@ -2496,7 +2496,15 @@ export default class GameScene extends Phaser.Scene {
     const n=this.net.peerCount?.()??(this.net.hasPeer()?1:0);
     let text;
     if(n>1) text=`⚠ There are ${n} other players in room ${this.roomCode} — close extra tabs or use a new code.`;
-    else if(!n) text=`Not connected yet — share code ${this.roomCode}`;
+    else if(!n){
+      // While nobody's connected it's re-announcing to the trackers every
+      // few seconds (network/fastTorrent.js); a ticking counter shows it's
+      // still looking rather than stuck. Refreshes itself once a second
+      // until the rival turns up or the editor is left.
+      const secs=this.net.searchingFor?.();
+      text=`Not connected yet — share code ${this.roomCode}`+(secs!=null?` · looking for your rival… ${secs}s`:'');
+      if(!this._netStatusTick) this._netStatusTick=setTimeout(()=>{ this._netStatusTick=null; this._renderNetStatus(); },1000);
+    }
     else {
       const mine=!this.mySquadConfirmed?'yours: not confirmed':this._squadAcked?'yours: ✓ received by opponent':'yours: ✓ confirmed, sending…';
       text=this.role==='A'
