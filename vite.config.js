@@ -10,6 +10,13 @@ export default defineConfig({
   build: {
     target: 'es2022'
   },
+  // src/network/fastTorrent.js imports Trystero's own source files by path
+  // (they aren't in its package "exports"), so the dev server serves them
+  // as-is instead of pre-bundling Trystero. Their WebRTC dependency is
+  // CommonJS underneath and only works pre-bundled, so it's listed here.
+  optimizeDeps: {
+    include: ['@thaunknown/simple-peer']
+  },
   server: {
     host: true, // para poder probar desde el móvil en la misma red local
     port: 5173

@@ -159,6 +159,8 @@ const RUN_ANIM_MIN_SPEED  = 18;  // px/s: slower than this shows the idle frame
 const RUN_STRIDE_PX       = 9;   // px moved per run-cycle frame
 const RUN_FACING_DEADZONE = 12;  // px/s sideways before a player turns to face that way
 const BALL_ROLL_PX        = 5;   // px rolled per ball frame
+const EXHAUSTED_RATIO     = 0.15; // stamina share below which a player shows two sweat drops (one below FATIGUE_THRESHOLD)
+const DROP_FALL_MS        = 900;  // one sweat drop's fall-and-fade loop
 const NAME_DARK_TEXT_ABOVE = 0.6; // luminance (0-1) above which a team-colour name plate gets dark text
 const BALL_DRAW_DY        = 8;   // ball drawn this far below its physics position, at the sprites' feet    // camera pan per wheel "line" when the browser counts lines, not pixels
 
@@ -383,6 +385,7 @@ const AI_LEVELS = {
             shotGate:{ closeRange:270, maxReach:0.55, pressFrac:0.6 } }
 };
 const AI_LEVEL_DEFAULT = 'normal';
+const AI_LEVEL_LABEL = { easy:'Easy', normal:'Normal', hard:'Hard', expert:'Expert' };
 const AI_SPEED_BONUS_SHARE = 0.5; // movement gets half the stat inflation
 
 // Fouls are meant to be a rare punctuation, not a regular interruption:
@@ -892,7 +895,9 @@ export default class GameScene extends Phaser.Scene {
     if(noRivalTab&&this.editSide==='rival') this._setEditSide('me');
     if(multi) this._renderNetStatus(); else document.getElementById('squad-status').textContent='';
     // No AI plays in multiplayer, so its difficulty has nothing to affect.
-    document.getElementById('ai-difficulty-row').style.display=multi?'none':'flex';
+    // Tournaments and stories set theirs up front (and keep it for the whole
+    // run), so the editor's own selector is for solo only.
+    document.getElementById('ai-difficulty-row').style.display=(multi||this.uiMode==='tournament'||this.uiMode==='story')?'none':'flex';
     // Half length is host-authoritative once a match is running (the guest
     // just mirrors whatever the host picked — see _syncRoleFromNet's own
     // note and the client-side clock sync in _incomingState) — only the
@@ -1001,7 +1006,12 @@ export default class GameScene extends Phaser.Scene {
     const badge=document.getElementById('mode-badge');
     const multi=this._vsHuman();
     const text=this._twoHosts?'⚠ Both players are hosting'
-      :multi?`👥 Multiplayer · ${this.role==='A'?'host':'guest'}${this._pingMs!=null?` · ${Math.round(this._pingMs)} ms`:''}`:'🤖 Solo (vs AI)';
+      :multi?`👥 Multiplayer · ${this.role==='A'?'host':'guest'}${this._pingMs!=null?` · ${Math.round(this._pingMs)} ms`:''}`
+      // uiMode is back to its default after the reload between a tournament's
+      // matches, so the fixture/step being played says what this match is.
+      :(this._tournamentPendingFixture||this.uiMode==='tournament')?`🏆 Tournament · ${AI_LEVEL_LABEL[this.aiLevel]||''}`
+      :(this._storyPending||this.uiMode==='story')?`📖 Story · ${AI_LEVEL_LABEL[this.aiLevel]||''}`
+      :'🤖 Solo (vs AI)';
     if(badge.textContent!==text) badge.textContent=text;
     badge.classList.toggle('is-multi',multi);
   }
@@ -2486,7 +2496,15 @@ export default class GameScene extends Phaser.Scene {
     const n=this.net.peerCount?.()??(this.net.hasPeer()?1:0);
     let text;
     if(n>1) text=`⚠ There are ${n} other players in room ${this.roomCode} — close extra tabs or use a new code.`;
-    else if(!n) text=`Not connected yet — share code ${this.roomCode}`;
+    else if(!n){
+      // While nobody's connected it's re-announcing to the trackers every
+      // few seconds (network/fastTorrent.js); a ticking counter shows it's
+      // still looking rather than stuck. Refreshes itself once a second
+      // until the rival turns up or the editor is left.
+      const secs=this.net.searchingFor?.();
+      text=`Not connected yet — share code ${this.roomCode}`+(secs!=null?` · looking for your rival… ${secs}s`:'');
+      if(!this._netStatusTick) this._netStatusTick=setTimeout(()=>{ this._netStatusTick=null; this._renderNetStatus(); },1000);
+    }
     else {
       const mine=!this.mySquadConfirmed?'yours: not confirmed':this._squadAcked?'yours: ✓ received by opponent':'yours: ✓ confirmed, sending…';
       text=this.role==='A'
@@ -2578,6 +2596,7 @@ export default class GameScene extends Phaser.Scene {
   _confirmTournamentSetup(){
     this.pendingTournamentType=document.querySelector('input[name="tournament-type"]:checked')?.value||'knockout';
     this.pendingTournamentSize=parseInt(document.querySelector('input[name="tournament-size"]:checked')?.value,10)||4;
+    this._setAiLevel(document.getElementById('tournament-ai-level')?.value);
     this.uiMode='tournament';
     this._applyUiMode();
     document.getElementById('tournament-panel').style.display='none';
@@ -2608,9 +2627,10 @@ export default class GameScene extends Phaser.Scene {
       ?makeSeededKnockout(['me',...opponents.slice().sort((a,b)=>this._entrantStrength(b)-this._entrantStrength(a))])
       :makeLeague(['me',...opponents]);
     // Half length is picked once, in the editor this squad was just built
-    // in, and rides along with the tournament: every fixture ends in a page
-    // reload (see _returnToMenu) that would otherwise reset it to the default.
-    this.activeTournament={...built,mySquad,halfLengthS:this.halfLengthS};
+    // in, and the AI difficulty on the setup form before it; both ride along
+    // with the tournament: every fixture ends in a page reload (see
+    // _returnToMenu) that would otherwise reset them to the defaults.
+    this.activeTournament={...built,mySquad,halfLengthS:this.halfLengthS,aiLevel:this.aiLevel};
     saveTournament(this.activeTournament);
     document.getElementById('squad-editor-panel').style.display='none';
     document.getElementById('tournament-panel').style.display='flex';
@@ -2624,6 +2644,9 @@ export default class GameScene extends Phaser.Scene {
     const opponent=pending.a==='me'?pending.b:pending.a;
     this._setRivalToEntrant(opponent);
     this._tournamentPendingFixture=pending;
+    // Every one of your matches plays at the difficulty picked at the start
+    // (a tournament saved before that was recorded plays on Normal, as it did).
+    this._setAiLevel(this.activeTournament.aiLevel);
     if(this.activeTournament.halfLengthS){
       this.halfLengthS=this.activeTournament.halfLengthS;
       this.matchClock.secondsRemaining=this.halfLengthS;
@@ -2669,7 +2692,8 @@ export default class GameScene extends Phaser.Scene {
             <label style="font-size:13px;"><input type="radio" name="tournament-size" value="8"> 8</label>
             <label style="font-size:13px;"><input type="radio" name="tournament-size" value="16"> 16</label>
           </div>
-          <div style="font-size:11px;opacity:.7;margin-bottom:10px;text-align:center;">Next, build your squad and pick the half length — both lock in for the whole tournament once it starts. Opponents are drawn at random from the game's real teams; in a knockout they get tougher each round you win, a league stays one flat difficulty throughout.</div>
+          ${this._levelSelectHtml('tournament-ai-level')}
+          <div style="font-size:11px;opacity:.7;margin-bottom:10px;text-align:center;">Every match you play in it uses that difficulty. Next, build your squad and pick the half length — both lock in for the whole tournament once it starts. Opponents are drawn at random from the game's real teams; in a knockout the teams get tougher each round you win, while a league is a flat random draw.</div>
           <div style="text-align:center;"><button class="nes-btn is-primary" data-tournament-action="setup-continue">Continue</button></div>
         </div>`;
       return;
@@ -2689,7 +2713,7 @@ export default class GameScene extends Phaser.Scene {
       </div>`;
     };
     const headerHtml=`<div style="font-size:12px;opacity:.75;margin-bottom:4px;">${t.type==='knockout'?'Knockout':'League'} — ${t.entrants.length} teams</div>
-      <div style="font-size:11px;opacity:.7;margin-bottom:10px;">Your squad: ${t.mySquad?.formation||'?'}${t.halfLengthS?` · ${Math.round(t.halfLengthS/60)} min halves`:''} (locked for this tournament)</div>`;
+      <div style="font-size:11px;opacity:.7;margin-bottom:10px;">Your squad: ${t.mySquad?.formation||'?'}${t.halfLengthS?` · ${Math.round(t.halfLengthS/60)} min halves`:''} · ${AI_LEVEL_LABEL[t.aiLevel]||AI_LEVEL_LABEL[AI_LEVEL_DEFAULT]} difficulty (locked for this tournament)</div>`;
     let bodyHtml;
     if(t.type==='knockout'){
       bodyHtml=`${headerHtml}<div style="display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;max-width:100%;">
@@ -2750,7 +2774,7 @@ export default class GameScene extends Phaser.Scene {
     const st=this.activeStory;
     if(!st){
       const done=new Set(this._readProfile().record.storiesCompleted);
-      body.innerHTML=STORY_RUNS.map(run=>{
+      body.innerHTML=this._levelSelectHtml('story-ai-level')+STORY_RUNS.map(run=>{
         const steps=this._storySteps(run); if(steps.length<3) return '';
         const hero=this._storyHeroPool(run).length>=STORY_MIN_PLAYERS?` · play as ${escHtml(run.hero)} or your own XI`:'';
         return `<div class="story-run"><div><div class="story-run-title">${escHtml(run.game)} — ${escHtml(run.title)}${done.has(run.id)?' <span class="story-done">✓ completed</span>':''}</div>
@@ -2778,7 +2802,7 @@ export default class GameScene extends Phaser.Scene {
         +(tries?`<div class="story-meta">${tries} ${tries>1?'tries':'try'} so far</div>`:'')
         +`<div style="margin-top:10px;"><button class="nes-btn is-error is-compact" data-story-action="end">Abandon story</button></div>`;
     }
-    body.innerHTML=`<div class="story-head">${escHtml(run.game)} — ${escHtml(run.title)} · ${Math.min(st.step,steps.length)}/${steps.length}</div>
+    body.innerHTML=`<div class="story-head">${escHtml(run.game)} — ${escHtml(run.title)} · ${Math.min(st.step,steps.length)}/${steps.length} · ${AI_LEVEL_LABEL[st.aiLevel]||AI_LEVEL_LABEL[AI_LEVEL_DEFAULT]}</div>
       <ol class="story-ladder">${rows}</ol>${action}`;
   }
   /** Story start: build the squad (or field the run's own team), which then
@@ -2786,6 +2810,8 @@ export default class GameScene extends Phaser.Scene {
   _startStorySetup(runId){
     if(!getStoryRun(runId)) return;
     this.pendingStoryRun=runId;
+    // The difficulty picked above the run list is locked in for the whole run.
+    this._setAiLevel(document.getElementById('story-ai-level')?.value);
     this.uiMode='story';
     this._applyUiMode();
     document.getElementById('story-panel').style.display='none';
@@ -2814,7 +2840,7 @@ export default class GameScene extends Phaser.Scene {
     this._setRivalToEntrant(step.entrant);
     this._rivalName=step.team;
     this._storyPending={step:st.step};
-    if(AI_LEVELS[st.aiLevel]) this.aiLevel=st.aiLevel;
+    this._setAiLevel(st.aiLevel);
     if(st.halfLengthS){ this.halfLengthS=st.halfLengthS; this.matchClock.secondsRemaining=this.halfLengthS; this._renderClock(this.matchClock); }
     document.getElementById('story-panel').style.display='none';
     this._startMatch(st.mySquad,this._rivalSquadPayload());
@@ -2892,14 +2918,19 @@ export default class GameScene extends Phaser.Scene {
     const shadow=this.add.image(0,feet,TEX.shadow).setScale(ART_SCALE);
     const ring=this.add.image(0,feet,TEX.ellipse).setScale(ART_SCALE).setVisible(false);
     const base=img(keeper?TEX.plKeeper:TEX.plBase,'idle'), kit=img(TEX.plKit,'idle'), hair=img(TEX.plHair,'idle').setTint(DEFAULT_HAIR);
-    const c=this.add.container(x,y,[shadow,ring,base,kit,hair]).setDepth(5);
-    c.px={base,kit,hair,ring,keeper,frame:'idle',facing:1,phase:0,vx:0,lastX:x,lastY:y};
+    // Sweat drops beside the head of a tired player (one, or two when exhausted).
+    const drop=(dx)=>this.add.image(dx,feet-24,TEX.drop).setScale(ART_SCALE).setVisible(false);
+    const drops=[drop(9),drop(-9)];
+    const c=this.add.container(x,y,[shadow,ring,base,kit,hair,...drops]).setDepth(5);
+    c.px={base,kit,hair,ring,drops,dropPhase:Math.random(),tired:0,keeper,frame:'idle',facing:1,phase:0,vx:0,lastX:x,lastY:y};
     return c;
   }
   /** Kit colour (darker for keepers), greyed while stunned; the white ring
    *  under the player each side is steering. */
-  _paintPlayer(e,color,{stunned=false,active=false,keeper=null}={}){
+  _paintPlayer(e,color,{stunned=false,active=false,keeper=null,tired=0}={}){
     const px=e.gfx?.px; if(!px) return;
+    // One drop when tired (below FATIGUE_THRESHOLD), two when exhausted.
+    if(tired!==px.tired){ px.tired=tired; px.drops.forEach((d,i)=>d.setVisible(tired>i)); }
     // Gloves on whoever is in goal now (a substitution can change that).
     if(keeper!=null&&keeper!==px.keeper){ px.keeper=keeper; px.base.setTexture(keeper?TEX.plKeeper:TEX.plBase,px.frame); px.kitTint=null; }
     const kit=stunned?0x8a8a8a:(px.keeper?shade(color,0.35):color);
@@ -2920,6 +2951,15 @@ export default class GameScene extends Phaser.Scene {
   _applyHair(e){
     const id=e.id, p=getPlayerById(id); if(!e.gfx?.px) return;
     hairColorFor(p).then(col=>{ if(e.id===id&&e.gfx?.px){ e.gfx.px.hair.setTint(col); e.gfx.px.hairTint=col; } });
+  }
+  /** 0 = fine, 1 = tired (below the stamina share where a player starts to
+   *  slow down, FATIGUE_THRESHOLD), 2 = exhausted. Read from the stats the
+   *  host keeps and the guest mirrors (see statsAll.stam). */
+  _tiredLevel(role,id){
+    const st=this._statsFor(role,id);
+    if(!st?.maxStamina) return 0;
+    const ratio=st.stamina/st.maxStamina;
+    return ratio<EXHAUSTED_RATIO?2:ratio<FATIGUE_THRESHOLD?1:0;
   }
   /** Run cycle and facing, from how far each sprite actually moved since the
    *  last frame — so the guest animates from the synced positions just like
@@ -2942,6 +2982,16 @@ export default class GameScene extends Phaser.Scene {
       if(e.gfx.scaleX!==px.facing) e.gfx.scaleX=px.facing;
       // Lower on the pitch is drawn in front.
       e.gfx.setDepth(5+e.gfx.y*0.00001);
+      // Sweat drops trickle down beside the head, fading as they fall (still
+      // with reduced motion).
+      if(px.tired){
+        const calm=this._reducedMotion();
+        px.drops.forEach((d,i)=>{
+          if(!d.visible) return;
+          const t=calm?0.3:((this.time.now/DROP_FALL_MS)+px.dropPhase+i*0.5)%1;
+          d.y=12-26+t*10; d.alpha=1-Math.max(0,(t-0.6)/0.4);
+        });
+      }
     }
   }
 
@@ -3329,7 +3379,7 @@ export default class GameScene extends Phaser.Scene {
     const st=document.getElementById('sub-panel-state');
     if(st){
       if(viewingRival){
-        st.textContent="👁 Viewing the rival's formation — read-only";
+        st.textContent="👁 Rival's formation — read-only. Press and hold a player to see their stats";
         st.className='';
       } else {
         // Opening this panel always pauses the match now, for both players
@@ -3358,13 +3408,16 @@ export default class GameScene extends Phaser.Scene {
     }</div>`;
     listEl.innerHTML=pitchHtml+benchHtml;
     if(viewingRival){
-      // Read-only: a tap just shows their stats, no sub/swap selection —
-      // arming a cross-team subSel would let it pair with your own pins.
+      // Read-only: a tap does nothing — no sub/swap selection (arming a
+      // cross-team subSel would let it pair with your own pins) — and
+      // their stats open on a press and hold, like everywhere else.
       listEl.querySelectorAll('.slot-pin[data-roster-id]').forEach(pin=>{
-        pin.addEventListener('click',()=>{ const p=getPlayerById(pin.dataset.rosterId); if(p) this._showPlayerStats(p); });
+        const p=getPlayerById(pin.dataset.rosterId);
+        this._armPressGestures(pin,{onTap:()=>{},onLongPress:()=>p&&this._showPlayerStats(p)});
       });
       listEl.querySelectorAll('.bench-pin[data-bench-id]').forEach(pin=>{
-        pin.addEventListener('click',()=>{ const p=getPlayerById(pin.dataset.benchId); if(p) this._showPlayerStats(p); });
+        const p=getPlayerById(pin.dataset.benchId);
+        this._armPressGestures(pin,{onTap:()=>{},onLongPress:()=>p&&this._showPlayerStats(p)});
       });
     } else {
       // Both selectors only ever match an occupied pin (see the roster-id/
@@ -3421,10 +3474,12 @@ export default class GameScene extends Phaser.Scene {
       const selCls=(p&&sel&&sel.type==='slot'&&sel.id===entry.id)?' selected':'';
       if(p){
         const isOut=this._isOut(role,entry.id);
+        const tired=isOut?0:this._tiredLevel(role,entry.id);
         const av=this._avatarFill(p,col);
         return `<div class="slot-pin${selCls}" style="left:${left};top:${top};${isOut?'opacity:.4;pointer-events:none;':''}" data-roster-id="${entry.id}">
           <div class="pin-avatar" style="${av.style}">${av.inner}</div>
           ${this._posBadge(p.position,p.position!==roles[slot])}${this._ratingBadge(p)}
+          ${tired?`<span class="pin-sweat" title="${tired>1?'Exhausted':'Tired'}">${'💧'.repeat(tired)}</span>`:''}
           <div class="pin-name">${p.nickname||p.name}${isOut?' (OFF)':''}</div>
         </div>`;
       }
@@ -4270,6 +4325,22 @@ export default class GameScene extends Phaser.Scene {
     return 1-t*(1-SHOT_FALLOFF_MIN);
   }
   _aiParams(){ return AI_LEVELS[this.aiLevel]||AI_LEVELS[AI_LEVEL_DEFAULT]; }
+  /** One place that changes the AI level, keeping the squad editor's own
+   *  selector (used in solo) in step. Unknown values fall back to the default. */
+  _setAiLevel(level){
+    this.aiLevel=AI_LEVELS[level]?level:AI_LEVEL_DEFAULT;
+    const sel=document.getElementById('ai-level-select'); if(sel) sel.value=this.aiLevel;
+  }
+  /** "Difficulty" selector for the tournament setup form and the story list:
+   *  that choice is locked in for every match of the run (see
+   *  _startTournamentWithSquad / _startStoryWithSquad). Starts on whatever
+   *  was used last. */
+  _levelSelectHtml(id){
+    return `<div style="display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:12px;flex-wrap:wrap;">
+      <label for="${id}" style="font-size:12px;">AI difficulty:</label>
+      <select id="${id}" class="pixel-select">${Object.entries(AI_LEVEL_LABEL).map(([k,v])=>`<option value="${k}"${k===this.aiLevel?' selected':''}>${v}</option>`).join('')}</select>
+    </div>`;
+  }
   /** Difficulty stat inflation for `role`, applied live rather than baked
    *  into the stored stats: it only ever applies to the AI's own side (B,
    *  and only while nobody is connected to play it), so switching level or
@@ -4647,12 +4718,7 @@ export default class GameScene extends Phaser.Scene {
     if(this.matchClock.overtime){ this.matchClock.otElapsed+=delta/1000; return; }
     this.matchClock.secondsRemaining-=delta/1000;
     if(this.matchClock.secondsRemaining<=0){
-      // Time's up mid-duel or mid-shot: the play finishes first (and its
-      // result shows), then the whistle. Nothing new starts meanwhile —
-      // see the stoppage check in _hostUpdate.
       this.matchClock.secondsRemaining=0;
-      if(this._playStillOn()){ this.matchClock.stoppage=true; return; }
-      this.matchClock.stoppage=false;
       if(this.matchClock.half===1){
         this.matchClock.half=2; this.matchClock.secondsRemaining=this.halfLengthS;
         // Whoever didn't start the match gets the second half, as in a real
@@ -4673,13 +4739,11 @@ export default class GameScene extends Phaser.Scene {
       else { this.matchClock.ended=true; this.matchClock.secondsRemaining=0; }
     }
   }
-  /** A duel or a shot sequence still being decided — or, once the clock has
-   *  run out on one, its result banner not yet showing who won. */
-  _playStillOn(){
-    if(this.confrontation||this.shotSeq) return true;
-    const r=this.confrontResult;
-    return !!(this.matchClock.stoppage&&r&&this.time.now<r.outcomeAt);
-  }
+  /** A duel, block, chain or keeper stage is on, or a shot's sequence is still
+   *  being decided (including the gaps between its stages). Match time stands
+   *  still for all of it: the clock, golden-goal overtime, running stamina and
+   *  the stats' minutes, so a long duel doesn't eat the half. */
+  _inDuel(){ return !!(this.confrontation||this.shotSeq); }
   /** Level at full time: golden-goal overtime, as long as it takes — the next
    *  goal wins. Not in a league fixture, where a draw is a result that
    *  earns each side a point. Set up like the half-time break: line up,
@@ -4945,16 +5009,18 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
     this._applySquadRequests(myInput,inputB,aiActive);
-    if(!this.matchClock.ended) this._tickClock(delta);
-    if(!this.matchClock.ended) this._tickFatigue(delta);
-    if(!this.matchClock.ended&&this.matchStats){
+    // Time stands still while a duel or shot is being decided (see _inDuel).
+    const timeRuns=!this.matchClock.ended&&!this._inDuel();
+    if(timeRuns) this._tickClock(delta);
+    if(timeRuns&&!this.matchClock.ended) this._tickFatigue(delta);
+    if(timeRuns&&!this.matchClock.ended&&this.matchStats){
       this.matchStats.elapsedS+=delta/1000;
       if(this.possRole) this.matchStats[this.possRole].possMs+=delta;
     }
 
     if(this.confrontation){
       this._progressConfront(now,myInput,inputB,aiActive);
-    } else if(!this.matchClock.ended && !this.matchClock.stoppage && !this._checkOutOfBounds(now)){
+    } else if(!this.matchClock.ended && !this._checkOutOfBounds(now)){
       this._updateActive('A'); this._updateActive('B');
       this._moveTeam('A',myInput.targets,now); this._moveTeam('B',inputB.targets,now);
       if(myInput.passTarget&&this.possRole==='A') this._doPass('A',myInput.passTarget);
@@ -5007,7 +5073,12 @@ export default class GameScene extends Phaser.Scene {
       const stunAry=[...this.stunMap.entries()].map(([k,v])=>({id:k,until:v}));
       const statsAll={
         a:this.teamA.map(e=>{const s=this._statsFor('A',e.id); return s?s.sp:null;}),
-        b:this.teamB.map(e=>{const s=this._statsFor('B',e.id); return s?s.sp:null;})
+        b:this.teamB.map(e=>{const s=this._statsFor('B',e.id); return s?s.sp:null;}),
+        // Stamina as whole percents, so the guest can show who's tired too.
+        stam:{
+          a:this.teamA.map(e=>{const s=this._statsFor('A',e.id); return s?.maxStamina?Math.round(100*s.stamina/s.maxStamina):null;}),
+          b:this.teamB.map(e=>{const s=this._statsFor('B',e.id); return s?.maxStamina?Math.round(100*s.stamina/s.maxStamina):null;})
+        }
       };
       const sentOff={
         a:this.teamA.filter(e=>this._isOut('A',e.id)).map(e=>e.id),
@@ -5208,7 +5279,11 @@ export default class GameScene extends Phaser.Scene {
       ['A','B'].forEach(role=>{
         const team=role==='A'?this.teamA:this.teamB, map=role==='A'?this.statsMapA:this.statsMapB;
         const arr=role==='A'?rs.statsAll.a:rs.statsAll.b; if(!arr) return;
-        team.forEach((e,i)=>{ const sp=arr[i]; const st=map.get(e.id); if(sp!=null&&st) st.sp=sp; });
+        const stam=rs.statsAll.stam?(role==='A'?rs.statsAll.stam.a:rs.statsAll.stam.b):null;
+        team.forEach((e,i)=>{
+          const sp=arr[i]; const st=map.get(e.id); if(sp!=null&&st) st.sp=sp;
+          const pct=stam?stam[i]:null; if(pct!=null&&st?.maxStamina) st.stamina=pct/100*st.maxStamina;
+        });
       });
     }
   }
@@ -5468,8 +5543,8 @@ export default class GameScene extends Phaser.Scene {
    *  steered player — host and guest alike, every frame. */
   _highlightActive(){
     const now=this.time.now;
-    this.teamA.forEach(e=>this._paintPlayer(e,this.teamColorA,{stunned:this._isStunned(e.id,now),active:e.id===this.activeIdA,keeper:e.id===this.gkIdA}));
-    this.teamB.forEach(e=>this._paintPlayer(e,this.teamColorB,{stunned:this._isStunned(e.id,now),active:e.id===this.activeIdB,keeper:e.id===this.gkIdB}));
+    this.teamA.forEach(e=>this._paintPlayer(e,this.teamColorA,{stunned:this._isStunned(e.id,now),active:e.id===this.activeIdA,keeper:e.id===this.gkIdA,tired:this._tiredLevel('A',e.id)}));
+    this.teamB.forEach(e=>this._paintPlayer(e,this.teamColorB,{stunned:this._isStunned(e.id,now),active:e.id===this.activeIdB,keeper:e.id===this.gkIdB,tired:this._tiredLevel('B',e.id)}));
   }
 
   _updatePossRing(){

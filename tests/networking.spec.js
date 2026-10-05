@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { waitForRosterLoaded } from './helpers.js';
+import { waitForRosterLoaded, waitForRosterAtModeSelect } from './helpers.js';
 
 test.describe('multiplayer squad-confirm race', () => {
   test('confirming your squad before a peer connects waits, instead of silently starting a solo match vs AI', async ({ page }) => {
@@ -341,6 +341,59 @@ test.describe('host is the lowest id in the room', () => {
 });
 
 
+// Finding the rival: our copy of Trystero's tracker strategy announces every
+// few seconds until someone connects, instead of every 33s–2min.
+test.describe('looking for the rival', () => {
+  test('announces every 3s while searching, at the trackers own pace once connected', async ({ page }) => {
+    await waitForRosterLoaded(page);
+    const r = await page.evaluate(async () => {
+      const m = await import('/src/network/fastTorrent.js');
+      return {
+        consts: [m.SEARCH_ANNOUNCE_MS, m.IDLE_ANNOUNCE_MS, m.MAX_ANNOUNCE_MS],
+        searching: [m.announceDelay(true, undefined), m.announceDelay(true, 90_000), m.announceDelay(true, 1_000)],
+        connected: [m.announceDelay(false, undefined), m.announceDelay(false, 1_000), m.announceDelay(false, 60_000), m.announceDelay(false, 600_000)],
+      };
+    });
+    expect(r.consts).toEqual([3_000, 33_333, 120_333]);
+    expect(r.searching).toEqual([3_000, 3_000, 3_000]);
+    expect(r.connected).toEqual([33_333, 33_333, 60_000, 120_333]);
+  });
+
+  test('multiplayer starts out searching and the status line counts the seconds', async ({ page }) => {
+    await waitForRosterAtModeSelect(page);
+    await page.click('#mode-multi-btn');
+    await page.click('#mode-multi-start-btn');
+    const r = await page.evaluate(async () => {
+      const m = await import('/src/network/fastTorrent.js');
+      return { searching: m.isSearching(), secs: window.__scene.net.searchingFor(), sameId: m.selfId === window.__scene.net.selfId };
+    });
+    expect(r.searching).toBe(true);
+    expect(typeof r.secs).toBe('number');
+    expect(r.sameId).toBe(true);
+    await expect(page.locator('#squad-status')).toContainText(/looking for your rival… \d+s/);
+    // It ticks on its own, without anything else re-rendering the line.
+    const before = await page.locator('#squad-status').textContent();
+    await page.waitForTimeout(2200);
+    expect(await page.locator('#squad-status').textContent()).not.toBe(before);
+  });
+
+  test('setSearching flips the pace and searchingFor reports null once not searching', async ({ page }) => {
+    await waitForRosterAtModeSelect(page);
+    await page.click('#mode-multi-btn');
+    await page.click('#mode-multi-start-btn');
+    const r = await page.evaluate(async () => {
+      const m = await import('/src/network/fastTorrent.js');
+      m.setSearching(false);
+      const off = [m.isSearching(), window.__scene.net.searchingFor()];
+      m.setSearching(true);
+      const on = [m.isSearching(), typeof window.__scene.net.searchingFor()];
+      return { off, on };
+    });
+    expect(r.off).toEqual([false, null]);
+    expect(r.on).toEqual([true, 'number']);
+  });
+});
+
 // Guest responsiveness: less traffic on the reliable channel, taps delivered
 // exactly once, rarely-changing state sent only when it changes, and the
 // guest's own drawn runs moving at once instead of after the round trip.
@@ -492,5 +545,44 @@ test.describe('guest responsiveness', () => {
     expect(r.kept).toBe(true);
     expect(r.lead).toBeGreaterThan(2); // ahead of the host's (stale) position, toward the waypoint
     expect(r.after).toBeLessThan(r.before * 0.7);
+  });
+  test('stamina reaches the guest: the host sends whole percents, and a tired player shows the drop there too', async ({ browser }) => {
+    const hostPage = await browser.newPage();
+    await hostMatch(hostPage);
+    // Make two of the host's own and one of the rival's players tired, then read what it sends.
+    const { state, hostSquad, tiredIds } = await hostPage.evaluate(async () => {
+      const s = window.__scene;
+      const setPct = (role, i, pct) => { const e = (role === 'A' ? s.teamA : s.teamB)[i]; const st = s._statsFor(role, e.id); st.stamina = st.maxStamina * pct / 100; return e.id; };
+      const ids = { a3: setPct('A', 3, 30), a4: setPct('A', 4, 10), b2: setPct('B', 2, 25) };
+      await new Promise((r) => setTimeout(r, 500));
+      // Merged oldest to newest, as a guest does: the squads from the first
+      // state, the stamina from the latest.
+      const st = s.__states.filter((d) => d.matchStarted);
+      return { state: st.reduce((acc, d) => ({ ...acc, ...d }), {}), hostSquad: s.mySquadPayload, tiredIds: ids };
+    });
+    await hostPage.close();
+    expect(state.statsAll.stam.a[3]).toBe(30);
+    expect(state.statsAll.stam.a[4]).toBe(10);
+    expect(state.statsAll.stam.b[2]).toBe(25);
+
+    const page = await browser.newPage();
+    await multiplayer(page, { host: false });
+    const r = await page.evaluate(({ state, hostSquad }) => {
+      const s = window.__scene;
+      s.mySquadPayload = { starterIds: state.starterIds.b, benchIds: [], formation: '4-4-2' };
+      s.mySquadConfirmed = true;
+      s.remoteSquadPayload = hostSquad;
+      s._incomingState(state);
+      s._buildClientTeams();
+      s._syncClientIds(s.remoteState);
+      s._highlightActive();
+      const drops = (team, i) => team[i].gfx.px.drops.map((d) => d.visible);
+      return { a3: drops(s.teamA, 3), a4: drops(s.teamA, 4), b2: drops(s.teamB, 2), fresh: drops(s.teamA, 5), lvl: s._tiredLevel('A', s.teamA[3].id) };
+    }, { state, hostSquad });
+    expect(r.a3).toEqual([true, false]);   // 30%: tired
+    expect(r.a4).toEqual([true, true]);    // 10%: exhausted
+    expect(r.b2).toEqual([true, false]);
+    expect(r.fresh).toEqual([false, false]);
+    expect(r.lvl).toBe(1);
   });
 });

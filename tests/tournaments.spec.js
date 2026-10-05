@@ -145,10 +145,10 @@ test.describe('tournament UI', () => {
     await expect(page.locator('#squad-editor-panel')).toBeVisible();
     await expect(page.locator('#squad-side-tabs')).toBeHidden();
     expect(await page.evaluate(() => window.__scene.uiMode)).toBe('tournament');
-    // Unlike multiplayer, tournament fixtures you don't control are still
-    // played out by the AI, and you're still the one setting half length —
-    // neither row is multiplayer-only, so both stay visible here.
-    await expect(page.locator('#ai-difficulty-row')).toBeVisible();
+    // The AI difficulty is picked on the setup form and locked for the whole
+    // tournament, so the editor doesn't offer it again; you're still the one
+    // setting half length here (it's not a multiplayer-only row).
+    await expect(page.locator('#ai-difficulty-row')).toBeHidden();
     await expect(page.locator('#half-length-row')).toBeVisible();
 
     await expect(page.locator('#confirm-squad-btn')).toBeDisabled();
@@ -255,6 +255,53 @@ test.describe('tournament UI', () => {
     await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
     const teamAIds = await page.evaluate(() => window.__scene.teamA.map((e) => e.id));
     expect(teamAIds).toEqual(lockedStarters);
+  });
+
+  test('the difficulty picked on the setup form applies to every match of the tournament, even across reloads', async ({ page }) => {
+    await waitForRosterAtModeSelect(page);
+    await page.click('#mode-tournament-btn');
+    // Offered on the setup form, defaulting to Normal; the editor's own selector is gone in this mode.
+    await expect(page.locator('#tournament-ai-level')).toHaveValue('normal');
+    await page.selectOption('#tournament-ai-level', 'expert');
+    await page.click('[data-tournament-action="setup-continue"]');
+    await expect(page.locator('#ai-difficulty-row')).toBeHidden();
+    await page.click('#pitch-randomize-btn');
+    await page.click('#confirm-squad-btn');
+
+    expect((await page.evaluate(() => window.__scene.activeTournament)).aiLevel).toBe('expert');
+    await expect(page.locator('#tournament-body')).toContainText('Expert difficulty');
+
+    await page.click('[data-tournament-action="play"]');
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
+    expect(await page.evaluate(() => window.__scene.aiLevel)).toBe('expert');
+    expect(await page.evaluate(() => window.__scene._aiStatMul('B'))).toBeGreaterThan(1.25);
+    await expect(page.locator('#mode-badge')).toHaveText('🏆 Tournament · Expert');
+
+    // Full time reloads the page, which puts the level back to Normal — the
+    // next fixture must still play at the tournament's own.
+    await page.evaluate(() => { document.querySelector('#scoreboard .score').textContent = '5-0'; });
+    await page.evaluate(() => window.__scene._showFullTime());
+    await page.waitForTimeout(150);
+    await page.reload();
+    await page.waitForFunction(() => document.querySelectorAll('#squad-pick-list .pick-card').length > 0, { timeout: 15000 });
+    await page.click('#landing-play-btn');
+    expect(await page.evaluate(() => window.__scene.aiLevel)).toBe('normal');
+    await page.click('#mode-tournament-btn');
+    await page.click('[data-tournament-action="play"]');
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
+    expect(await page.evaluate(() => window.__scene.aiLevel)).toBe('expert');
+    await expect(page.locator('#mode-badge')).toHaveText('🏆 Tournament · Expert');
+  });
+
+  test('a tournament saved before difficulty was recorded plays on Normal', async ({ page }) => {
+    await openTournamentSetup(page);
+    await page.click('#pitch-randomize-btn');
+    await page.click('#confirm-squad-btn');
+    // An old save has no level; whatever the page was left on must not leak into it.
+    await page.evaluate(() => { const s = window.__scene; const t = { ...s.activeTournament }; delete t.aiLevel; s.activeTournament = t; s._setAiLevel('expert'); });
+    await page.click('[data-tournament-action="play"]');
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
+    expect(await page.evaluate(() => window.__scene.aiLevel)).toBe('normal');
   });
 
   test('the half length picked before the tournament sticks for every fixture, even across reloads', async ({ page }) => {

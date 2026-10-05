@@ -81,6 +81,30 @@ test.describe('story mode', () => {
     await expect(page.locator('.story-head')).toContainText('1/10');
   });
 
+  test('the difficulty picked above the run list applies to every match of the run, even across reloads', async ({ page }) => {
+    await openStory(page);
+    await expect(page.locator('#story-ai-level')).toHaveValue('normal');
+    await page.selectOption('#story-ai-level', 'hard');
+    await page.click('[data-story-action="start"][data-run="ie1"]');
+    await expect(page.locator('#ai-difficulty-row')).toBeHidden(); // set up front, not in the editor
+    await page.click('#pitch-randomize-btn');
+    await page.click('#confirm-squad-btn');
+    await expect(page.locator('.story-head')).toContainText('Hard');
+    expect((await page.evaluate(() => window.__scene.activeStory)).aiLevel).toBe('hard');
+
+    await page.click('[data-story-action="play"]');
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
+    expect(await page.evaluate(() => window.__scene.aiLevel)).toBe('hard');
+    await expect(page.locator('#mode-badge')).toHaveText('📖 Story · Hard');
+    await finish(page, 2, 0);
+
+    // After the reload the next match is still Hard.
+    await page.click('[data-story-action="play"]');
+    await page.waitForFunction(() => window.__scene.matchStarted === true, { timeout: 10000 });
+    expect(await page.evaluate(() => window.__scene.aiLevel)).toBe('hard');
+    await expect(page.locator('#mode-badge')).toHaveText('📖 Story · Hard');
+  });
+
   test('winning the last match completes the run and marks it in the profile', async ({ page }) => {
     await openStory(page);
     await page.click('[data-story-action="start"][data-run="ie2"]');

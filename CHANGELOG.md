@@ -4,6 +4,77 @@ Every feature, data source, bug fix and design decision that went into
 this project, roughly in the order it happened. For what the project is
 and how to run it, see [`README.md`](./README.md).
 
+## Multiplayer finds the rival in seconds, not minutes
+- **Before:** after both players reloaded into the same room, it could
+  take half a minute or more before they saw each other. Two browsers only
+  meet through a BitTorrent tracker "announce", and Trystero announces
+  once on joining and then every 33s (stretched up to 2 minutes when a
+  tracker asks). If that first exchange missed, the next try was that far
+  off.
+- **Now** `src/network/fastTorrent.js`, our copy of Trystero's tracker
+  strategy, announces **every 3 seconds while nobody is connected**. Once
+  the rival connects it goes back to Trystero's own pace, so a match
+  doesn't keep signalling, and if the rival drops out it starts looking
+  again straight away.
+  - Each announce sends 3 WebRTC offers instead of 10 (a room is two
+    players), and offers nobody answered are closed after two more
+    announces. Trystero never closes them, which at the faster pace would
+    have piled up to the browser's connection limit.
+  - The squad editor's status line counts while it looks: "Not connected
+    yet — share code ABCDE · looking for your rival… 7s".
+  - The dev server now pre-bundles Trystero's WebRTC library
+    (`vite.config.js`), since `fastTorrent.js` imports Trystero's source
+    files directly.
+- Tests: `networking.spec.js` ("looking for the rival": the pace while
+  searching vs connected, searching from the start, the ticking counter).
+
+## Tournament and story difficulty: pick it up front, every match plays at it
+- **Before:** the AI difficulty was only a small selector in the squad
+  editor. A story saved the level, but a tournament didn't, so after the
+  reload that ends every match, each later fixture silently played on
+  Normal whatever you'd picked.
+- **Now** you choose the **AI difficulty** (Easy / Normal / Hard / Expert)
+  on the tournament setup form, and above the run list for a story. It's
+  locked in for the whole run, and every one of your matches plays at it,
+  across the reloads (`aiLevel` is saved with the tournament, as the
+  story already did).
+  - The squad editor's own selector is for solo only now, so there's one
+    place to set it.
+  - The tournament header and the story ladder show the level, and the
+    match badge reads "🏆 Tournament · Hard" or "📖 Story · Hard".
+  - A tournament saved before this plays on Normal, as it always did.
+- Tests: `tournaments.spec.js` and `story.spec.js` (the level applies to
+  every match across a reload, and old saves fall back to Normal).
+
+## Time stops in duels, a sweat drop for tired players, rival stats on a long press
+- **Match time stops during duels.**
+  - Before, the clock ran through the choice window (up to 20s), the VS
+    reveal and every stage of a shot, so a long duel ate the half.
+  - Now the half clock, golden-goal overtime, running stamina and the
+    stats' minutes all stand still while a duel, block, chain or keeper
+    stage is on, and through the gaps between a shot's stages
+    (`_inDuel`). The guest sees it too, as it reads the host's clock.
+  - This replaces the earlier "whistle waits for the duel" hold
+    (`matchClock.stoppage`, `_playStillOn`), which is gone: time can no
+    longer run out mid-duel, and the half ends on the first tick after it.
+- **A sweat drop over tired players.**
+  - Below 40% stamina (where a player starts to slow down) a small pixel
+    water drop trickles down beside their head; below 15% there are two.
+    It's shown for both teams, so you can see the rival flagging, and the
+    AI's tired players are the ones it's about to sub off (it subs at 35%).
+  - The in-game team panel marks them too: a 💧 on the pin of each tired
+    player, two for exhausted, for both your side and the rival's.
+  - In multiplayer the host now sends each on-pitch player's stamina as a
+    whole percent (`statsAll.stam`), so the guest shows the same drops.
+- **Rival stats open on a press and hold.** In the team panel's rival view
+  a single tap on a pin or bench pin used to open their stat sheet. Now a
+  tap does nothing and a 500ms hold opens it, like your own side and the
+  squad editor. The rival's status line says so.
+- The AI's in-game behaviour is unchanged: it only makes substitutions.
+- Tests: `match-tweaks.spec.js` (time stops in duels),
+  `pixel-art.spec.js` and `networking.spec.js` (sweat drops, guest sync),
+  `rival-formation-view.spec.js` (press and hold).
+
 ## Offside: the offside side goes back to its own half
 - **Before:** only the offside side's players who were ahead of the ball
   were moved, to 40px behind it. That's still in the rival's half, so
